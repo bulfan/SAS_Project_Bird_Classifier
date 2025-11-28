@@ -5,10 +5,14 @@ data:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
   sample_rate: 22050
+  # Split ratios (must sum to 1.0)
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
 
 # Model settings
 model:
-  num_classes: 10  # Number of bird species
+  num_classes: 6  # Number of bird species (aldfly, amecro, amered, brebla, purfin, pygnut)
 
 # Training settings
 training:
