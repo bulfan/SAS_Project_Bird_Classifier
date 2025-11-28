@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Data files (large files should not be committed)
+*.wav
+*.mp3
+*.flac
+*.ogg
+
+# Model checkpoints
+*.pt
+*.pth
+*.ckpt
+*.h5
+
+# OS files
+.DS_Store
+Thumbs.db
