@@ -4,8 +4,11 @@ Bird Sound Classifier - Main Entry Point
 This script demonstrates the basic pipeline for bird sound classification:
 1. Load configuration (via Hydra)
 2. Load dataset
-3. Preprocess audio
-4. Train/use classifier
+3. Split dataset (BEFORE any analysis/preprocessing)
+4. Run data exploration on TRAINING data only
+5. Run spectral analysis on TRAINING data only
+6. Preprocess audio (fit on train, apply to all)
+7. Train/use classifier
 """
 
 import hydra
@@ -14,6 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.data.dataset import BirdSoundDataset
 from src.preprocessing.audio_processor import AudioProcessor
 from src.models.classifier import BirdClassifier
+from src.analysis import DataExplorationPipeline, SpectralAnalysisPipeline
 # from src.training.trainer import Trainer  # Will be used later
 
 
@@ -26,6 +30,9 @@ def main(cfg: DictConfig) -> None:
     # Print configuration
     print("\n1. Configuration loaded via Hydra:")
     print(OmegaConf.to_yaml(cfg))
+
+    # Convert to dict for pipeline initialization
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
     # Extract configuration values
     raw_dir = cfg.data.raw_dir
@@ -43,24 +50,28 @@ def main(cfg: DictConfig) -> None:
     # Initialize components
     print("\n2. Initializing components...")
     dataset = BirdSoundDataset(data_dir=raw_dir, processed_dir=processed_dir)
-    processor = AudioProcessor(sample_rate=sample_rate)
-    classifier = BirdClassifier(num_classes=num_classes)
-
     print("   - Dataset initialized")
+
+    processor = AudioProcessor(sample_rate=sample_rate)
     print("   - Audio processor initialized")
+
+    classifier = BirdClassifier(num_classes=num_classes)
     print("   - Classifier initialized")
+
+    # Initialize analysis pipelines with config
+    exploration_pipeline = DataExplorationPipeline(cfg_dict)
+    print("   - Data Exploration Pipeline initialized")
+
+    spectral_pipeline = SpectralAnalysisPipeline(cfg_dict)
+    print("   - Spectral Analysis Pipeline initialized")
+
 
     # Load and explore dataset
     print("\n3. Loading dataset...")
     dataset.load()
-
-    summary = dataset.summary()
-    print(f"   - Total samples: {summary['total_samples']}")
-    print(f"   - Number of classes: {summary['num_classes']}")
-    print(f"   - Classes: {summary['class_names']}")
-    print("\n   Class distribution:")
-    for class_name, count in summary['class_distribution'].items():
-        print(f"      {class_name}: {count} samples")
+    
+    # Print dataset summary if enabled
+    dataset.print_summary("Full Dataset Summary")
 
     # Split dataset into train/validation/test
     print("\n4. Splitting dataset (stratified)...")
@@ -69,17 +80,39 @@ def main(cfg: DictConfig) -> None:
         val_ratio=val_ratio,
         test_ratio=test_ratio,
         shuffle=True,
-        seed=42
+        seed=cfg.data.seed
     )
-    print(f"   - Training samples: {len(train_dataset)}")
-    print(f"   - Validation samples: {len(val_dataset)}")
-    print(f"   - Test samples: {len(test_dataset)}")
+    
+    # Print split summaries
+    train_dataset.print_summary("Training Dataset")
+    val_dataset.print_summary("Validation Dataset")
+    test_dataset.print_summary("Test Dataset")
 
-    print("\n5. Pipeline ready!")
+    # Run analysis pipelines based on configuration
+    # Pipeline modes: "single", "folder", "train", "dataset"
+    print("\n5. Running Analysis Pipelines...")
+    
+    # Data Exploration Pipeline (time-domain)
+    exploration_results = exploration_pipeline.run(
+        dataset=dataset,
+        train_dataset=train_dataset
+    )
+
+    # Spectral Analysis Pipeline (frequency-domain)
+    spectral_results = spectral_pipeline.run(
+        dataset=dataset,
+        train_dataset=train_dataset
+    )
+
+    # TODO: Next steps in pipeline
+    print("\n6. Pipeline ready!")
     print("   Next steps:")
-    print("   - Implement preprocessing in src/preprocessing/audio_processor.py")
-    print("   - Implement model in src/models/classifier.py")
-    print("   - Implement training in src/training/trainer.py")
+    print("   - Design FIR filters based on spectral analysis")
+    print("   - Fit preprocessing on training data")
+    print("   - Apply preprocessing to train/val/test")
+    print("   - Extract features")
+    print("   - Train classifier")
+    print("   - Evaluate on test set")
 
 
 if __name__ == "__main__":

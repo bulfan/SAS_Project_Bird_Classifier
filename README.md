@@ -53,3 +53,15 @@ python main.py
 2. Implement the preprocessing pipeline in `src/preprocessing/`
 3. Define your model architecture in `src/models/`
 4. Train the model using `src/training/`
+
+
+## Future steps
+
+1. Load dataset (file paths + labels)
+2. Split into train/val/test (just paths, no audio loaded yet)
+3. Analyze training data only (exploration, spectral) → understand YOUR training data
+4. Fit preprocessing on training data only (e.g., normalization stats)
+5. Apply preprocessing to all sets (train, val, test) using training stats
+6. Train model on training set
+7. Validate/tune on validation set
+8. Final evaluation on test set

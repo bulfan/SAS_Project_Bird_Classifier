@@ -9,6 +9,35 @@ data:
   train_ratio: 0.7
   val_ratio: 0.15
   test_ratio: 0.15
+  seed : 42  # Random seed for reproducibility
+
+# Analysis settings
+analysis:
+  # Data Exploration (time-domain) settings
+  exploration:
+    enabled: true            # Enable/disable this pipeline
+    print_details: true      # Automatically print analysis details
+    run_mode: "train"        # Options: "single", "folder", "train", "dataset"
+    single_file: null        # Path to single file (used when run_mode="single")
+    folder_path: null        # Path to folder (used when run_mode="folder")
+    frame_ms: null           # Frame size in ms for frame-wise analysis (null = whole file)
+    output_dir: "outputs/time"  # Output directory for plots
+    save_plots: true
+    show_plots: false
+  
+  # Spectral Analysis (frequency-domain) settings
+  spectral:
+    enabled: true            # Enable/disable this pipeline
+    print_details: true      # Automatically print analysis details
+    run_mode: "train"        # Options: "single", "folder", "train", "dataset"
+    single_file: null        # Path to single file (used when run_mode="single")
+    folder_path: null        # Path to folder (used when run_mode="folder")
+    n_fft: 2048              # FFT window size
+    hop_length: 512          # Hop length for STFT/spectrogram
+    window: "hann"           # Window type: 'hann', 'hamming', or 'none'
+    output_dir: "outputs/frequency"  # Output directory for plots
+    save_plots: true
+    show_plots: false
 
 # Model settings
 model:

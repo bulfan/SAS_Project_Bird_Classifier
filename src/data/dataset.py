@@ -272,6 +272,35 @@ class BirdSoundDataset:
             "data_dir": str(self.data_dir)
         }
 
+    def print_summary(self, title: str = "Dataset Summary") -> None:
+        """
+        Print a formatted summary of the dataset.
+        
+        Args:
+            title: Title to display at the top of the summary.
+        """
+        stats = self.summary()
+        
+        print(f"\n   {title}")
+        print(f"   {'=' * 50}")
+        
+        if not stats.get("loaded", False):
+            print("   Dataset not loaded.")
+            return
+        
+        print(f"   Data Directory: {stats['data_dir']}")
+        print(f"   Total Samples: {stats['total_samples']}")
+        print(f"   Number of Classes: {stats['num_classes']}")
+        print(f"\n   Class Distribution:")
+        print(f"   {'-' * 30}")
+        
+        for class_name, count in stats['class_distribution'].items():
+            percentage = (count / stats['total_samples']) * 100
+            bar = '█' * int(percentage / 5)
+            print(f"   {class_name:12} | {count:4} samples | {percentage:5.1f}% | {bar}")
+        
+        print(f"   {'-' * 30}")
+
     def __repr__(self) -> str:
         """Return string representation of the dataset."""
         if not self._loaded:

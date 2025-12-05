@@ -8,10 +8,13 @@ dist/
 build/
 *.egg-info/
 
-# Virtual environments
+# Virtual environment and uv
 venv/
 env/
 .venv/
+pyproject.toml
+.python-version
+uv.lock
 
 # IDE
 .idea/
@@ -37,3 +40,8 @@ env/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Helper folders nad documents
+useful_tutorials/
+proj_pdf/
+outputs/
