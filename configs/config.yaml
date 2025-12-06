@@ -2,7 +2,7 @@
 
 # Data settings
 data:
-  raw_dir: "data/raw"
+  raw_dir: "C:/Users/jpgft/Downloads/SaS/train-bird-audio/train-bird-audio"
   processed_dir: "data/processed"
   sample_rate: 22050
   # Split ratios (must sum to 1.0)
