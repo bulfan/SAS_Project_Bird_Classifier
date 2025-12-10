@@ -1,3 +1,7 @@
+# ffmpeg configuration
+ffmpeg:
+  converter: "C:/ffmpeg/bin/ffmpeg.exe"
+  ffprobe: "C:/ffmpeg/bin/ffprobe.exe"
 # Default configuration for bird sound classifier
 
 # Data settings
@@ -32,8 +36,8 @@ analysis:
     run_mode: "train"        # Options: "single", "folder", "train", "dataset"
     single_file: null        # Path to single file (used when run_mode="single")
     folder_path: null        # Path to folder (used when run_mode="folder")
-    n_fft: 2048              # FFT window size
-    hop_length: 512          # Hop length for STFT/spectrogram
+    n_fft: 512            # FFT window size
+    hop_length: 256          # Hop length for STFT/spectrogram
     window: "hann"           # Window type: 'hann', 'hamming', or 'none'
     output_dir: "outputs/frequency"  # Output directory for plots
     save_plots: true

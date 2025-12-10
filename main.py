@@ -19,6 +19,8 @@ from src.preprocessing.audio_processor import AudioProcessor
 from src.models.classifier import BirdClassifier
 from src.utils.plotting import plot_waveform
 from src.analysis.time_domain import TimeDomainAnalysis
+from src.analysis.data_exploration import  DataExplorationPipeline
+from src.analysis.spectral_analysis import SpectralAnalysisPipeline
 # from src.training.trainer import Trainer  # Will be used later
 import os
 

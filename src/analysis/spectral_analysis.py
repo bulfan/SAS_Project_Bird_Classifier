@@ -15,7 +15,14 @@ Metrics computed:
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
 import numpy as np
+import yaml
 from pydub import AudioSegment
+
+# Load ffmpeg paths from config.yaml
+with open("configs/config.yaml", "r") as f:
+    ffmpeg_cfg = yaml.safe_load(f).get("ffmpeg", {})
+AudioSegment.converter = ffmpeg_cfg.get("converter", "ffmpeg")
+AudioSegment.ffprobe   = ffmpeg_cfg.get("ffprobe", "ffprobe")
 import matplotlib.pyplot as plt
 
 if TYPE_CHECKING:
@@ -125,9 +132,8 @@ class SpectralAnalysisPipeline:
         return result
     
     def fft(self, signal: np.ndarray) -> np.ndarray:
-        """Compute FFT using Cooley-Tukey algorithm (radix-2 DIT)."""
+        """Iterative Cooley-Tukey FFT (radix-2 DIT) for speed."""
         n = len(signal)
-        
         if n & (n - 1) != 0:
             next_pow2 = 1
             while next_pow2 < n:
@@ -136,23 +142,29 @@ class SpectralAnalysisPipeline:
             padded[:n] = signal
             signal = padded
             n = next_pow2
-        
-        if n == 1:
-            return np.array([signal[0]], dtype=np.complex128)
-        
-        even = self.fft(signal[0::2])
-        odd = self.fft(signal[1::2])
-        
-        result = np.zeros(n, dtype=np.complex128)
-        half_n = n // 2
-        
-        for k in range(half_n):
-            angle = -2.0 * np.pi * k / n
-            twiddle = np.cos(angle) + 1j * np.sin(angle)
-            result[k] = even[k] + twiddle * odd[k]
-            result[k + half_n] = even[k] - twiddle * odd[k]
-        
-        return result
+
+        x = np.asarray(signal, dtype=np.complex128)
+        levels = int(np.log2(n))
+        indices = np.arange(n)
+        bit_rev_indices = np.zeros(n, dtype=int)
+        for i in range(n):
+            b = '{:0{width}b}'.format(i, width=levels)
+            bit_rev_indices[i] = int(b[::-1], 2)
+        x = x[bit_rev_indices]
+
+        size = 2
+        while size <= n:
+            half_size = size // 2
+            table_step = n // size
+            for i in range(0, n, size):
+                for j in range(half_size):
+                    k = j * table_step
+                    twiddle = np.exp(-2j * np.pi * k / n)
+                    temp = x[i + j + half_size] * twiddle
+                    x[i + j + half_size] = x[i + j] - temp
+                    x[i + j] = x[i + j] + temp
+            size *= 2
+        return x
     
     # =========================================================================
     # Spectral Analysis Methods
@@ -242,40 +254,34 @@ class SpectralAnalysisPipeline:
     def compute_average_power(self, samples: np.ndarray) -> float:
         """Compute average power in the frequency domain."""
         _, psd = self.compute_power_spectral_density(samples)
-        
-        total = 0.0
-        for val in psd:
-            total += val
-        
-        return float(total / len(psd)) if len(psd) > 0 else 0.0
+        psd = np.array(psd)
+        # Ignore near-zero values for average power
+        valid_psd = psd[psd > np.max(psd) * 0.01] if np.max(psd) > 0 else psd
+        if len(valid_psd) == 0:
+            return 0.0
+        return float(np.mean(valid_psd))
     
     def compute_frequency_range(self, samples: np.ndarray, threshold_db: float = -60.0) -> Tuple[float, float]:
         """Compute min and max frequency with significant energy."""
         frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
-        
+
         if len(magnitudes) == 0:
             return 0.0, 0.0
-        
-        max_mag = magnitudes[0]
-        for mag in magnitudes:
-            if mag > max_mag:
-                max_mag = mag
-        
+
+        max_mag = np.max(magnitudes)
         if max_mag == 0:
             return 0.0, 0.0
-        
-        threshold_linear = max_mag * (10.0 ** (threshold_db / 20.0))
-        
-        min_freq = frequencies[-1]
-        max_freq = frequencies[0]
-        
-        for i, mag in enumerate(magnitudes):
-            if mag >= threshold_linear:
-                if frequencies[i] < min_freq:
-                    min_freq = frequencies[i]
-                if frequencies[i] > max_freq:
-                    max_freq = frequencies[i]
-        
+
+        # Use a relative threshold (e.g., 5% of max magnitude)
+        threshold_linear = max_mag * 0.05
+
+        # Find indices where magnitude exceeds threshold
+        indices = np.where(magnitudes >= threshold_linear)[0]
+        if len(indices) == 0:
+            return 0.0, 0.0
+
+        min_freq = frequencies[indices[0]]
+        max_freq = frequencies[indices[-1]]
         return float(min_freq), float(max_freq)
     
     def compute_magnitude_range(self, samples: np.ndarray) -> Tuple[float, float, float, float]:
@@ -485,16 +491,21 @@ class SpectralAnalysisPipeline:
                                shading='gouraud', cmap=cmap)
             cbar = plt.colorbar(im, ax=ax)
             cbar.set_label('Magnitude (dB)')
+            # Custom y-axis ticks and labels for log scale
+            ax.set_yscale('log')
+            band_ticks = [100, 500, 1000, 5000, 10000, 22050]
+            band_labels = ["0-100", "100-500", "500-1000", "1000-5000", "5000-10000", "10000-22050"]
+            ax.set_yticks(band_ticks)
+            ax.set_yticklabels(band_labels)
+            ax.set_ylim(20, sample_rate / 2)
+            ax.set_ylabel('Frequency (Hz, log scale)')
         else:
             im = ax.pcolormesh(times, frequencies, spectrogram,
                                shading='gouraud', cmap=cmap)
             cbar = plt.colorbar(im, ax=ax)
             cbar.set_label('Magnitude')
-        
-        ax.set_xlabel('Time (seconds)')
-        ax.set_ylabel('Frequency (Hz)')
-        ax.set_title(f'Spectrogram: {Path(file_path).name}')
-        ax.set_ylim(0, sample_rate / 2)
+            ax.set_ylabel('Frequency (Hz)')
+            ax.set_ylim(0, sample_rate / 2)
         
         plt.tight_layout()
         
