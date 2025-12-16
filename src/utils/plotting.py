@@ -53,5 +53,16 @@ def plot_waveform(file_path: str,
 
     if show and created_fig:
         plt.show()
+        try:
+            plt.close(fig)
+        except Exception:
+            plt.close('all')
+    else:
+        # if we saved the figure but didn't show it, close to avoid leaks
+        if out_path is not None and created_fig:
+            try:
+                plt.close(fig)
+            except Exception:
+                plt.close('all')
 
     return fig, ax

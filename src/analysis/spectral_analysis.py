@@ -428,8 +428,12 @@ class SpectralAnalysisPipeline:
         
         if self.show_plots:
             plt.show()
+            try:
+                plt.close(fig)
+            except Exception:
+                plt.close('all')
         else:
-            plt.close()
+            plt.close(fig)
     
     def plot_psd(
         self,
@@ -466,8 +470,12 @@ class SpectralAnalysisPipeline:
         
         if self.show_plots:
             plt.show()
+            try:
+                plt.close(fig)
+            except Exception:
+                plt.close('all')
         else:
-            plt.close()
+            plt.close(fig)
     
     def plot_spectrogram(
         self,
@@ -519,8 +527,12 @@ class SpectralAnalysisPipeline:
         
         if self.show_plots:
             plt.show()
+            try:
+                plt.close(fig)
+            except Exception:
+                plt.close('all')
         else:
-            plt.close()
+            plt.close(fig)
     
     # =========================================================================
     # Main Run Method

@@ -281,8 +281,12 @@ class DataExplorationPipeline:
         
         if self.show_plots:
             plt.show()
+            try:
+                plt.close(fig)
+            except Exception:
+                plt.close('all')
         else:
-            plt.close()
+            plt.close(fig)
     
     # =========================================================================
     # Main Run Method

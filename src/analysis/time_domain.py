@@ -161,6 +161,58 @@ class TimeDomainAnalysis:
             print(f"   - Crest Factor: {self.results['crest_factor']:.6f}")
         return self.results
 
+    def compute_call_length(self, mode: str = 'total', top_db: float = 40.0, min_call_duration: float = 0.02,
+                            low_freq: float | None = 1000.0, high_freq: float | None = 8000.0):
+        """
+        Detect non-silent segments (calls) using librosa and return durations.
+
+        Args:
+            mode: 'total' returns total non-silent duration, 'longest' returns longest segment,
+                  'segments' returns a list of segment durations (seconds).
+            top_db: the threshold (in dB) below reference to consider as silence for librosa.effects.split.
+            min_call_duration: minimum duration (seconds) to consider a detected segment a call.
+
+        Returns:
+            float or list: depending on `mode`.
+        """
+        if self.signal is None:
+            raise ValueError("No signal loaded. Call load_audio() or pass signal to constructor.")
+        if mode not in ('total', 'longest', 'segments'):
+            raise ValueError("mode must be one of 'total', 'longest', 'segments'")
+
+        # Prepare signal
+        y = np.asarray(self.signal, dtype=float)
+        # Optional bandpass filter to reduce background noise and focus on call band
+        if low_freq is not None and high_freq is not None and low_freq < high_freq:
+            try:
+                from scipy.signal import butter, filtfilt
+                nyq = 0.5 * self.sample_rate
+                low = float(low_freq) / nyq
+                high = float(high_freq) / nyq
+                b, a = butter(4, [low, high], btype='band')
+                y = filtfilt(b, a, y)
+            except Exception:
+                # If scipy not available or filtering fails, continue with raw signal
+                pass
+
+        # Use librosa.effects.split which works in dB relative to maximum
+        intervals = librosa.effects.split(y, top_db=float(top_db), frame_length=4096, hop_length=1024)
+        durations = []
+        for s, e in intervals:
+            dur = (e - s) / float(self.sample_rate)
+            if dur >= min_call_duration:
+                durations.append(dur)
+
+        if len(durations) == 0:
+            if mode == 'segments':
+                return []
+            return 0.0
+
+        if mode == 'segments':
+            return durations
+        if mode == 'total':
+            return float(np.sum(durations))
+        return float(np.max(durations))
         
 
 
