@@ -71,39 +71,40 @@ try:
 except Exception:
 	plt.close('all')
 
-# === 3. Spectrum Plot ===
-segment = get_non_silent_segment(tda.signal, segment_length=4096, threshold=0.01)
-sap = SpectralAnalysisPipeline({'analysis': {'spectral': {'n_fft': 4096, 'window': 'hann'}}, 'data': {'sample_rate': tda.sample_rate}})
-freqs, mags = sap.compute_magnitude_spectrum(segment)
-mags = mags / (mags.max() if mags.max() > 0 else 1.0)
-fig = plt.figure(figsize=(10, 4))
-# Use binned bars to visualize the magnitude spectrum (reduces visual clutter)
-num_bins = 200
-freq_min = 0
-freq_max = tda.sample_rate / 2
-bins = np.linspace(freq_min, freq_max, num_bins + 1)
-bin_idx = np.digitize(freqs, bins) - 1
-bin_mags = np.zeros(num_bins)
-bin_counts = np.zeros(num_bins)
-for i, m in enumerate(mags):
-	idx = bin_idx[i]
-	if 0 <= idx < num_bins:
-		bin_mags[idx] += m
-		bin_counts[idx] += 1
-# avoid divide-by-zero
-bin_counts[bin_counts == 0] = 1
-bin_mags = bin_mags / bin_counts
-bin_centers = 0.5 * (bins[:-1] + bins[1:])
-plt.bar(bin_centers, bin_mags, width=(bins[1] - bins[0]) * 0.9, align='center')
-plt.xlabel('Frequency (Hz)')
-plt.ylabel('Mean normalized magnitude')
-plt.title(f"Spectrum (binned): {os.path.basename(file_path)}")
-plt.xlim(freq_min, freq_max)
-plt.tight_layout()
-plt.show()
+# === 3. Spectrogram (whole file) — optionally downsample for speed ===
+import librosa
 try:
-	plt.close(fig)
+	# choose a target sample rate for faster STFT (only if original is higher)
+	target_sr = min(tda.sample_rate, 22050)
+	if target_sr != tda.sample_rate:
+		y = librosa.resample(tda.signal.astype(np.float32), orig_sr=tda.sample_rate, target_sr=target_sr)
+	else:
+		y = tda.signal
+
+	# use a more moderate FFT size for speed (can be adjusted)
+	n_fft = 2048
+	hop_length = 512
+	sap_full = SpectralAnalysisPipeline({'analysis': {'spectral': {'n_fft': n_fft, 'hop_length': hop_length, 'window': 'hann'}}, 'data': {'sample_rate': target_sr}})
+	times, frequencies, spectrogram = sap_full.compute_spectrogram(y)
+	# convert to dB
+	eps = 1e-10
+	S_db = 20 * np.log10(spectrogram + eps)
+	fig = plt.figure(figsize=(12, 6))
+	ax = fig.add_subplot(1, 1, 1)
+	im = ax.pcolormesh(times, frequencies, S_db, shading='gouraud', cmap='magma')
+	cbar = fig.colorbar(im, ax=ax)
+	cbar.set_label('Magnitude (dB)')
+	ax.set_xlabel('Time (s)')
+	ax.set_ylabel('Frequency (Hz)')
+	ax.set_ylim(0, target_sr / 2)
+	ax.set_title(f'Spectrogram: {os.path.basename(file_path)} (sr={target_sr})')
+	plt.tight_layout()
+	plt.show()
+	try:
+		plt.close(fig)
+	except Exception:
+		plt.close('all')
 except Exception:
-	plt.close('all')
+	pass
 
 
