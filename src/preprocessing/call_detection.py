@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 import numpy as np
 import librosa
 
-from .audio_processor import bandpass_filter, normalize_audio
+from .audio_processor import AudioProcessor
 
 
 def detect_calls(y: np.ndarray,
@@ -30,17 +30,18 @@ def detect_calls(y: np.ndarray,
 
     y = np.asarray(y, dtype=float)
 
+    ap = AudioProcessor(sample_rate=sr)
     # Optionally normalize first so detection thresholds are consistent
     if normalize:
         try:
-            y = normalize_audio(y, method=normalize_method, target_rms=normalize_target_rms)
+            y = ap.normalize_audio(y, method=normalize_method, target_rms=normalize_target_rms)
         except Exception:
             pass
 
     # Optional bandpass filtering to focus on expected call band
     if low_freq is not None and high_freq is not None and low_freq < high_freq:
         try:
-            y = bandpass_filter(y, sr, low_freq, high_freq)
+            y = ap.bandpass_filter(y, low_freq, high_freq)
         except Exception:
             pass
 

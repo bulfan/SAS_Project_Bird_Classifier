@@ -12,6 +12,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from PIL import Image
+from src.preprocessing.call_detection import detect_calls
 
 
 def save_spectrogram(y, sr, out_path, n_fft=2048, hop_length=512, cmap='magma'):
@@ -42,14 +43,14 @@ def combine_images_horizontally(image_paths, out_path):
     new_im.save(out_path)
 
 
-def main(data_dir='data/raw', out_base='outputs/frequency_examples', n_per_class=2, target_sr=22050, n_fft=2048, hop_length=512):
+def main(data_dir='data/raw', out_base='outputs/frequency_examples', n_per_class=2, target_sr=22050, n_fft=2048, hop_length=512, calls_per_file=5):
     data_dir = Path(data_dir)
     out_base = Path(out_base)
     out_base.mkdir(parents=True, exist_ok=True)
     classes = [p for p in sorted(data_dir.iterdir()) if p.is_dir()]
     summary = {}
     for cls in classes:
-        files = sorted([f for f in cls.iterdir() if f.suffix.lower() in ('.wav', '.mp3', '.flac', '.ogg', '.m4a')])[:n_per_class]
+        files = sorted([f for f in cls.iterdir() if f.suffix.lower() in ('.wav', '.mp3', '.flac', '.ogg', '.m4a', '.npy')])[:n_per_class]
         if not files:
             continue
         class_out = out_base / cls.name
@@ -57,10 +58,28 @@ def main(data_dir='data/raw', out_base='outputs/frequency_examples', n_per_class
         saved = []
         for f in files:
             try:
-                y, sr = librosa.load(str(f), sr=target_sr, mono=True)
-                out_file = class_out / f'spectrogram_{f.stem}.png'
-                save_spectrogram(y, sr, str(out_file), n_fft=n_fft, hop_length=hop_length)
-                saved.append(str(out_file))
+                if f.suffix.lower() == '.npy':
+                    # processed numpy arrays (saved by preprocessing) are assumed
+                    # to be 1-D sample arrays at `target_sr` (no sr stored)
+                    y = np.load(str(f))
+                    sr = target_sr
+                else:
+                    y, sr = librosa.load(str(f), sr=target_sr, mono=True)
+                # detect calls and save up to `calls_per_file` chops per file
+                segments = detect_calls(y, sr)
+                if segments:
+                    for i, (start_t, end_t, dur) in enumerate(segments[:calls_per_file], start=1):
+                        s_idx = int(max(0, round(start_t * sr)))
+                        e_idx = int(min(len(y), round(end_t * sr)))
+                        y_seg = y[s_idx:e_idx]
+                        out_file = class_out / f'spectrogram_{f.stem}_call{i}.png'
+                        save_spectrogram(y_seg, sr, str(out_file), n_fft=n_fft, hop_length=hop_length)
+                        saved.append(str(out_file))
+                else:
+                    # fallback: save full-file spectrogram if no calls detected
+                    out_file = class_out / f'spectrogram_{f.stem}.png'
+                    save_spectrogram(y, sr, str(out_file), n_fft=n_fft, hop_length=hop_length)
+                    saved.append(str(out_file))
             except Exception as e:
                 print(f'Failed to process {f}: {e}')
         # combine into a grid (horizontal)
