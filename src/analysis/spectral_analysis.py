@@ -15,14 +15,7 @@ Metrics computed:
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
 import numpy as np
-import yaml
 from pydub import AudioSegment
-
-# Load ffmpeg paths from config.yaml
-with open("configs/config.yaml", "r") as f:
-    ffmpeg_cfg = yaml.safe_load(f).get("ffmpeg", {})
-AudioSegment.converter = ffmpeg_cfg.get("converter", "ffmpeg")
-AudioSegment.ffprobe   = ffmpeg_cfg.get("ffprobe", "ffprobe")
 import matplotlib.pyplot as plt
 
 if TYPE_CHECKING:
@@ -58,6 +51,8 @@ class SpectralAnalysisPipeline:
             self.single_file = spectral_cfg.get('single_file', None)
             self.folder_path = spectral_cfg.get('folder_path', None)
             self.sample_rate = cfg.get('data', {}).get('sample_rate', 22050)
+            # Max duration in seconds to analyze (prevents crashes on long files)
+            self.max_duration = spectral_cfg.get('max_duration', 30.0)
         else:
             self.n_fft = 2048
             self.hop_length = 512
@@ -71,13 +66,23 @@ class SpectralAnalysisPipeline:
             self.single_file = None
             self.folder_path = None
             self.sample_rate = 22050
+            self.max_duration = 30.0  # Analyze max 30 seconds by default
     
     # =========================================================================
     # Audio Loading Utilities
     # =========================================================================
     
-    def load_audio(self, file_path: str) -> Tuple[np.ndarray, int]:
-        """Load audio file and convert to normalized numpy array."""
+    def load_audio(self, file_path: str, limit_duration: bool = True) -> Tuple[np.ndarray, int]:
+        """
+        Load audio file and convert to normalized numpy array.
+        
+        Args:
+            file_path: Path to audio file.
+            limit_duration: If True, limit to max_duration seconds to prevent crashes.
+        
+        Returns:
+            Tuple of (samples, sample_rate)
+        """
         seg = AudioSegment.from_file(file_path)
         samples = np.array(seg.get_array_of_samples())
         
@@ -88,6 +93,12 @@ class SpectralAnalysisPipeline:
         sample_width_bits = seg.sample_width * 8
         max_val = float(2 ** (sample_width_bits - 1))
         samples = samples.astype(np.float32) / max_val
+        
+        # Limit duration to prevent crashes on very long files
+        if limit_duration and self.max_duration is not None:
+            max_samples = int(seg.frame_rate * self.max_duration)
+            if len(samples) > max_samples:
+                samples = samples[:max_samples]
         
         return samples, seg.frame_rate
     
@@ -145,22 +156,23 @@ class SpectralAnalysisPipeline:
 
         x = np.asarray(signal, dtype=np.complex128)
         levels = int(np.log2(n))
-        indices = np.arange(n)
+        
+        # Bit-reversal permutation
         bit_rev_indices = np.zeros(n, dtype=int)
         for i in range(n):
             b = '{:0{width}b}'.format(i, width=levels)
             bit_rev_indices[i] = int(b[::-1], 2)
         x = x[bit_rev_indices]
 
+        # Precompute twiddle factors for each stage (optimization)
         size = 2
         while size <= n:
             half_size = size // 2
-            table_step = n // size
+            # Precompute twiddles for this stage
+            twiddles = np.exp(-2j * np.pi * np.arange(half_size) / size)
             for i in range(0, n, size):
                 for j in range(half_size):
-                    k = j * table_step
-                    twiddle = np.exp(-2j * np.pi * k / n)
-                    temp = x[i + j + half_size] * twiddle
+                    temp = x[i + j + half_size] * twiddles[j]
                     x[i + j + half_size] = x[i + j] - temp
                     x[i + j] = x[i + j] + temp
             size *= 2
@@ -171,45 +183,81 @@ class SpectralAnalysisPipeline:
     # =========================================================================
     
     def compute_magnitude_spectrum(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute the magnitude spectrum of the signal."""
-        n = min(len(samples), self.n_fft)
-        windowed = samples[:n] * self._create_window(n)
+        """
+        Compute the magnitude spectrum of the signal.
         
-        if len(windowed) < self.n_fft:
-            padded = np.zeros(self.n_fft)
-            padded[:len(windowed)] = windowed
-            windowed = padded
+        Uses Welch's method: averages multiple overlapping windows to get
+        a more representative spectrum of the entire signal.
+        """
+        n_samples = len(samples)
+        window = self._create_window(self.n_fft)
+        window_sum = window.sum()
         
-        spectrum = self.fft(windowed)
-        n_positive = len(spectrum) // 2 + 1
-        spectrum = spectrum[:n_positive]
+        # Calculate number of segments for averaging (Welch's method)
+        # Use 50% overlap for better frequency resolution
+        hop = self.n_fft // 2
+        n_segments = max(1, (n_samples - self.n_fft) // hop + 1)
         
-        magnitudes = np.zeros(n_positive)
-        for i in range(n_positive):
-            real = spectrum[i].real
-            imag = spectrum[i].imag
-            magnitudes[i] = np.sqrt(real * real + imag * imag)
+        n_positive = self.n_fft // 2 + 1
+        avg_magnitudes = np.zeros(n_positive)
+        
+        for seg_idx in range(n_segments):
+            start = seg_idx * hop
+            end = start + self.n_fft
+            
+            if end <= n_samples:
+                segment = samples[start:end] * window
+            else:
+                # Pad last segment if needed
+                segment = np.zeros(self.n_fft)
+                available = n_samples - start
+                if available > 0:
+                    segment[:available] = samples[start:start + available] * window[:available]
+                else:
+                    continue
+            
+            spectrum = self.fft(segment)
+            
+            # Accumulate magnitudes
+            for i in range(n_positive):
+                real = spectrum[i].real
+                imag = spectrum[i].imag
+                avg_magnitudes[i] += np.sqrt(real * real + imag * imag)
+        
+        # Average over segments
+        if n_segments > 0:
+            avg_magnitudes = avg_magnitudes / n_segments
+        
+        # Normalize by window sum for one-sided spectrum
+        if window_sum > 0:
+            avg_magnitudes = avg_magnitudes * (2.0 / window_sum)
+            avg_magnitudes[0] = avg_magnitudes[0] / 2.0  # DC component is single-sided
+            avg_magnitudes[-1] = avg_magnitudes[-1] / 2.0  # Nyquist is single-sided
         
         frequencies = np.zeros(n_positive)
         freq_resolution = self.sample_rate / self.n_fft
         for i in range(n_positive):
             frequencies[i] = i * freq_resolution
         
-        return frequencies, magnitudes
+        return frequencies, avg_magnitudes
     
     def compute_power_spectral_density(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Compute Power Spectral Density (PSD) of the signal."""
         frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
         
-        n = len(samples)
+        # PSD is magnitude squared, normalized by sample rate to get power per Hz
         psd = np.zeros(len(magnitudes))
         for i in range(len(magnitudes)):
-            psd[i] = (magnitudes[i] * magnitudes[i]) / n
+            psd[i] = (magnitudes[i] * magnitudes[i]) / self.sample_rate
         
         return frequencies, psd
     
     def compute_spectrogram(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Compute spectrogram using Short-Time Fourier Transform (STFT)."""
+        """
+        Compute spectrogram using Short-Time Fourier Transform (STFT).
+        
+        Optimized to prevent memory issues and terminal crashes.
+        """
         n_samples = len(samples)
         window = self._create_window(self.n_fft)
         
@@ -220,46 +268,51 @@ class SpectralAnalysisPipeline:
         n_freqs = self.n_fft // 2 + 1
         spectrogram = np.zeros((n_freqs, n_frames))
         
-        for frame_idx in range(n_frames):
-            start = frame_idx * self.hop_length
-            end = start + self.n_fft
-            
-            if end <= n_samples:
-                frame = samples[start:end] * window
-            else:
-                frame = np.zeros(self.n_fft)
-                available = n_samples - start
-                if available > 0:
-                    frame[:available] = samples[start:start + available]
-                frame = frame * window
-            
-            spectrum = self.fft(frame)
-            
-            for i in range(n_freqs):
-                real = spectrum[i].real
-                imag = spectrum[i].imag
-                spectrogram[i, frame_idx] = np.sqrt(real * real + imag * imag)
+        # Normalize by window sum for consistent scaling
+        window_sum = window.sum()
+        scale_factor = 2.0 / window_sum if window_sum > 0 else 1.0
         
-        times = np.zeros(n_frames)
-        for i in range(n_frames):
-            times[i] = (i * self.hop_length + self.n_fft / 2) / self.sample_rate
+        # Process in batches to avoid memory issues and show progress
+        batch_size = 100
+        total_batches = (n_frames + batch_size - 1) // batch_size
         
-        frequencies = np.zeros(n_freqs)
-        freq_resolution = self.sample_rate / self.n_fft
-        for i in range(n_freqs):
-            frequencies[i] = i * freq_resolution
+        for batch_idx in range(total_batches):
+            start_frame = batch_idx * batch_size
+            end_frame = min(start_frame + batch_size, n_frames)
+            
+            for frame_idx in range(start_frame, end_frame):
+                start = frame_idx * self.hop_length
+                end = start + self.n_fft
+                
+                if end <= n_samples:
+                    frame = samples[start:end] * window
+                else:
+                    frame = np.zeros(self.n_fft)
+                    available = n_samples - start
+                    if available > 0:
+                        frame[:available] = samples[start:start + available]
+                    frame = frame * window
+                
+                spectrum = self.fft(frame)
+                
+                # Vectorized magnitude calculation (faster than loop)
+                magnitudes = np.abs(spectrum[:n_freqs]) * scale_factor
+                magnitudes[0] /= 2.0  # DC component
+                magnitudes[-1] /= 2.0  # Nyquist component
+                spectrogram[:, frame_idx] = magnitudes
+        
+        # Compute time and frequency axes
+        times = (np.arange(n_frames) * self.hop_length + self.n_fft / 2) / self.sample_rate
+        frequencies = np.arange(n_freqs) * (self.sample_rate / self.n_fft)
         
         return times, frequencies, spectrogram
     
     def compute_average_power(self, samples: np.ndarray) -> float:
         """Compute average power in the frequency domain."""
         _, psd = self.compute_power_spectral_density(samples)
-        psd = np.array(psd)
-        # Ignore near-zero values for average power
-        valid_psd = psd[psd > np.max(psd) * 0.01] if np.max(psd) > 0 else psd
-        if len(valid_psd) == 0:
+        if len(psd) == 0:
             return 0.0
-        return float(np.mean(valid_psd))
+        return float(np.mean(psd))
     
     def compute_frequency_range(self, samples: np.ndarray, threshold_db: float = -60.0) -> Tuple[float, float]:
         """Compute min and max frequency with significant energy."""
@@ -272,10 +325,8 @@ class SpectralAnalysisPipeline:
         if max_mag == 0:
             return 0.0, 0.0
 
-        # Use a relative threshold (e.g., 5% of max magnitude)
-        threshold_linear = max_mag * 0.05
-
-        # Find indices where magnitude exceeds threshold
+        threshold_linear = max_mag * (10.0 ** (threshold_db / 20.0))
+        
         indices = np.where(magnitudes >= threshold_linear)[0]
         if len(indices) == 0:
             return 0.0, 0.0
@@ -428,12 +479,8 @@ class SpectralAnalysisPipeline:
         
         if self.show_plots:
             plt.show()
-            try:
-                plt.close(fig)
-            except Exception:
-                plt.close('all')
         else:
-            plt.close(fig)
+            plt.close()
     
     def plot_psd(
         self,
@@ -470,12 +517,8 @@ class SpectralAnalysisPipeline:
         
         if self.show_plots:
             plt.show()
-            try:
-                plt.close(fig)
-            except Exception:
-                plt.close('all')
         else:
-            plt.close(fig)
+            plt.close()
     
     def plot_spectrogram(
         self,
@@ -496,24 +539,29 @@ class SpectralAnalysisPipeline:
             eps = 1e-10
             spectrogram_db = 20 * np.log10(spectrogram + eps)
             im = ax.pcolormesh(times, frequencies, spectrogram_db,
-                               shading='gouraud', cmap=cmap)
+                            shading='gouraud', cmap=cmap)
             cbar = plt.colorbar(im, ax=ax)
             cbar.set_label('Magnitude (dB)')
-            # Custom y-axis ticks and labels for log scale
+            
+            # Log scale settings
             ax.set_yscale('log')
-            band_ticks = [100, 500, 1000, 5000, 10000, 22050]
-            band_labels = ["0-100", "100-500", "500-1000", "1000-5000", "5000-10000", "10000-22050"]
+            # Dynamic ticks based on actual sample rate
+            max_freq = sample_rate / 2
+            band_ticks = [t for t in [100, 500, 1000, 5000, 10000, max_freq] if t <= max_freq]
             ax.set_yticks(band_ticks)
-            ax.set_yticklabels(band_labels)
-            ax.set_ylim(20, sample_rate / 2)
+            ax.set_yticklabels([str(int(t)) for t in band_ticks])
+            ax.set_ylim(20, max_freq)
             ax.set_ylabel('Frequency (Hz, log scale)')
         else:
             im = ax.pcolormesh(times, frequencies, spectrogram,
-                               shading='gouraud', cmap=cmap)
+                            shading='gouraud', cmap=cmap)
             cbar = plt.colorbar(im, ax=ax)
             cbar.set_label('Magnitude')
-            ax.set_ylabel('Frequency (Hz)')
             ax.set_ylim(0, sample_rate / 2)
+            ax.set_ylabel('Frequency (Hz)')
+            
+        ax.set_xlabel('Time (seconds)')
+        ax.set_title(f'Spectrogram: {Path(file_path).name}')
         
         plt.tight_layout()
         
@@ -527,12 +575,8 @@ class SpectralAnalysisPipeline:
         
         if self.show_plots:
             plt.show()
-            try:
-                plt.close(fig)
-            except Exception:
-                plt.close('all')
         else:
-            plt.close(fig)
+            plt.close()
     
     # =========================================================================
     # Main Run Method

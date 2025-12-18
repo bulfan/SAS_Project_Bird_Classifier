@@ -11,15 +11,14 @@ This script demonstrates the basic pipeline for bird sound classification:
 7. Train/use classifier
 """
 
+import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from src.data.dataset import BirdSoundDataset
 from src.preprocessing.audio_processor import AudioProcessor
 from src.models.classifier import BirdClassifier
-from src.utils.plotting import plot_waveform
-from src.analysis.time_domain import TimeDomainAnalysis
-from src.analysis.data_exploration import  DataExplorationPipeline
+from src.analysis.time_analysis import  TimeAnalysisPipeline
 from src.analysis.spectral_analysis import SpectralAnalysisPipeline
 # from src.training.trainer import Trainer  # Will be used later
 import os
@@ -63,7 +62,7 @@ def main(cfg: DictConfig) -> None:
     print("   - Classifier initialized")
 
     # Initialize analysis pipelines with config
-    exploration_pipeline = DataExplorationPipeline(cfg_dict)
+    time_pipeline = TimeAnalysisPipeline(cfg_dict)
     print("   - Data Exploration Pipeline initialized")
 
     spectral_pipeline = SpectralAnalysisPipeline(cfg_dict)
@@ -97,7 +96,7 @@ def main(cfg: DictConfig) -> None:
     print("\n5. Running Analysis Pipelines...")
     
     # Data Exploration Pipeline (time-domain)
-    exploration_results = exploration_pipeline.run(
+    time_results = time_pipeline.run(
         dataset=dataset,
         train_dataset=train_dataset
     )
@@ -114,35 +113,6 @@ def main(cfg: DictConfig) -> None:
     print("   - Implement preprocessing in src/preprocessing/audio_processor.py")
     print("   - Implement model in src/models/classifier.py")
     print("   - Implement training in src/training/trainer.py")
-
-    # Plot a sample waveform
-    print("\n6. Plotting sample waveform...")
-    audio_dir = raw_dir
-    if os.path.exists(audio_dir):
-        # Get first class subdirectory
-        subdirs = [d for d in os.listdir(audio_dir) if os.path.isdir(os.path.join(audio_dir, d))]
-        if subdirs:
-            class_dir = os.path.join(audio_dir, subdirs[0])
-            audio_files = [f for f in os.listdir(class_dir) if f.endswith(('.wav', '.mp3', '.ogg'))]
-            if audio_files:
-                sample_file = os.path.join(class_dir, audio_files[0])
-                print(f"   File: {sample_file}")
-                
-                # Compute time-domain analysis
-                print("\n7. Time-domain analysis...")
-                tda = TimeDomainAnalysis(sample_rate=sample_rate)
-                tda.load_audio(sample_file)
-                tda.run_all()
-                
-                # Now plot the waveform
-                print("\n8. Displaying waveform plot...")
-                plot_waveform(sample_file, sr=sample_rate)
-            else:
-                print("   No audio files found in class directory")
-        else:
-            print("   No class subdirectories found")
-    else:
-        print(f"   Audio directory not found: {audio_dir}")
 
 
 if __name__ == "__main__":

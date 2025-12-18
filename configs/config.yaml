@@ -1,12 +1,8 @@
-# ffmpeg configuration
-ffmpeg:
-  converter: "C:/ffmpeg/bin/ffmpeg.exe"
-  ffprobe: "C:/ffmpeg/bin/ffprobe.exe"
 # Default configuration for bird sound classifier
 
 # Data settings
 data:
-  raw_dir: "C:/Users/jpgft/Downloads/SaS/train-bird-audio/train-bird-audio"
+  raw_dir: "data/raw"
   processed_dir: "data/processed"
   sample_rate: 22050
   # Split ratios (must sum to 1.0)
@@ -21,11 +17,11 @@ analysis:
   exploration:
     enabled: true            # Enable/disable this pipeline
     print_details: true      # Automatically print analysis details
-    run_mode: "train"        # Options: "single", "folder", "train", "dataset"
-    single_file: null        # Path to single file (used when run_mode="single")
-    folder_path: null        # Path to folder (used when run_mode="folder")
+    run_mode: "folder"        # Options: "single", "folder", "train", "dataset"
+    single_file: data/test/XC142329.mp3        # Path to single file (used when run_mode="single")
+    folder_path: data/test        # Path to folder (used when run_mode="folder")
     frame_ms: null           # Frame size in ms for frame-wise analysis (null = whole file)
-    output_dir: "outputs/time"  # Output directory for plots
+    output_dir: "outputs/temp_time"  # Output directory for plots
     save_plots: true
     show_plots: false
   
@@ -33,15 +29,16 @@ analysis:
   spectral:
     enabled: true            # Enable/disable this pipeline
     print_details: true      # Automatically print analysis details
-    run_mode: "train"        # Options: "single", "folder", "train", "dataset"
+    run_mode: "folder"        # Options: "single", "folder", "train", "dataset"
     single_file: null        # Path to single file (used when run_mode="single")
-    folder_path: null        # Path to folder (used when run_mode="folder")
+    folder_path: data/test        # Path to folder (used when run_mode="folder")
     n_fft: 512            # FFT window size
     hop_length: 256          # Hop length for STFT/spectrogram
     window: "hann"           # Window type: 'hann', 'hamming', or 'none'
-    output_dir: "outputs/frequency"  # Output directory for plots
+    output_dir: "outputs/temp_freq"  # Output directory for plots
     save_plots: true
     show_plots: false
+    max_duration: 30.0      # Max duration (in seconds) to process for each audio file
 
 # Model settings
 model:
