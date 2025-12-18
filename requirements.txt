@@ -9,6 +9,7 @@ numpy>=1.21.0
 
 # Audio loading
 pydub>=0.25.0
+ffmpeg-python>=0.2.0
 
 # Visualization
 matplotlib>=3.4.0
