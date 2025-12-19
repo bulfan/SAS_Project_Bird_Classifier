@@ -127,21 +127,21 @@ class SpectralAnalysisPipeline:
     # =========================================================================
     # Discrete Fourier Transform (Implemented from Scratch)
     # =========================================================================
-    
+
     def dft(self, signal: np.ndarray) -> np.ndarray:
         """Compute the Discrete Fourier Transform from scratch (O(N^2))."""
         n = len(signal)
         result = np.zeros(n, dtype=np.complex128)
-        
+
         for k in range(n):
             for t in range(n):
                 angle = -2.0 * np.pi * k * t / n
                 real_part = np.cos(angle)
                 imag_part = np.sin(angle)
                 result[k] += signal[t] * (real_part + 1j * imag_part)
-        
+
         return result
-    
+
     def fft(self, signal: np.ndarray) -> np.ndarray:
         """Iterative Cooley-Tukey FFT (radix-2 DIT) for speed."""
         n = len(signal)
@@ -156,7 +156,7 @@ class SpectralAnalysisPipeline:
 
         x = np.asarray(signal, dtype=np.complex128)
         levels = int(np.log2(n))
-        
+
         # Bit-reversal permutation
         bit_rev_indices = np.zeros(n, dtype=int)
         for i in range(n):
