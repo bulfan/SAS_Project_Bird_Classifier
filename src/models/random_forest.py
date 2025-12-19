@@ -36,3 +36,10 @@ class RFClassifier:
         
     def predict(self, X):
         return self.model.predict(X)
+    
+    def get_feature_importance(self):
+        """Returns the feature importances (scores) from the trained model."""
+        if hasattr(self.model, 'feature_importances_'):
+            return self.model.feature_importances_
+        else:
+            return None

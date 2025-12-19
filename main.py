@@ -22,7 +22,6 @@ from src.models.KNN import KNNClassifier
 from src.models.random_forest import RFClassifier
 from src.data.dataset import BirdSoundDataset
 from src.preprocessing.audio_processor import AudioProcessor
-from src.models.classifier import BirdClassifier
 from src.analysis.time_analysis import TimeAnalysisPipeline
 from src.analysis.spectral_analysis import SpectralAnalysisPipeline
 from src.features.scaler import StandardScaler
@@ -333,16 +332,12 @@ def main(cfg: DictConfig) -> None:
     processor = AudioProcessor(cfg=cfg.preprocessing)
     print(f"   - Audio processor initialized (hp={processor.highpass_cutoff}Hz, lp={processor.lowpass_cutoff}Hz)")
 
-    classifier = BirdClassifier(num_classes=num_classes)
-    print("   - Classifier initialized")
-
     # Initialize analysis pipelines with config
     time_pipeline = TimeAnalysisPipeline(cfg_dict)
     print("   - Data Exploration Pipeline initialized")
 
     spectral_pipeline = SpectralAnalysisPipeline(cfg_dict)
     print("   - Spectral Analysis Pipeline initialized")
-
 
     # Load and explore dataset
     print("\n3. Loading dataset...")
@@ -373,14 +368,12 @@ def main(cfg: DictConfig) -> None:
     # Data Exploration Pipeline (time-domain)
     time_results = time_pipeline.run(
         dataset=dataset,
-        train_dataset=train_dataset
-    )
+        train_dataset=train_dataset)
 
     # Spectral Analysis Pipeline (frequency-domain)
     spectral_results = spectral_pipeline.run(
         dataset=dataset,
-        train_dataset=train_dataset
-    )
+        train_dataset=train_dataset)
 
     # Test preprocessing on a sample first
     print("\n6. Testing Preprocessing...")
@@ -436,10 +429,10 @@ def main(cfg: DictConfig) -> None:
     # Try odd numbers from 1 to 15
     for k in [1, 3, 5, 7, 9, 11, 13, 15]:
         knn = KNNClassifier(k=k)
-        knn.fit(X_train_scaled, y_train)
+        knn.fit(X_train_temp, y_train)
         
         # Evaluate on Validation Set
-        val_preds = knn.predict(X_val_scaled)
+        val_preds = knn.predict(X_val_temp)
         acc = accuracy_score(y_val, val_preds) # Assuming sklearn import or manual calc
         
         print(f"     k={k}: Validation Acc = {acc*100:.1f}%")
@@ -458,72 +451,103 @@ def main(cfg: DictConfig) -> None:
     # Get model type from config
     model_type = getattr(cfg.model, 'type', 'knn')
     use_validation = getattr(cfg.training, 'use_validation', True)
-
+    
+    # 1. MERGE RAW DATA
     # MERGE Train and Validation sets for maximum power
-    X_final = np.concatenate((X_train_scaled, X_val_scaled))
+    X_final = np.concatenate((X_train, X_val))
     y_final = np.concatenate((y_train, y_val))
 
-    # Determine which models to train
-    models_to_train = []
+    print(f"   Combined Training Set: {len(X_final)} samples")
+    
+    # 2. FINAL SCALING
+    # Fit scaler on the NEW combined dataset
+    final_scaler = StandardScaler()
+    X_final_scaled = final_scaler.fit_transform(X_final)
+    X_test_scaled = final_scaler.transform(X_test)
+
+    # 3. TRAIN MODELS
     if model_type in ['knn', 'both']:
-        models_to_train.append(('KNN', KNNClassifier(k=best_k)))
+        knn_final = KNNClassifier(k=best_k)
+        knn_final.fit(X_final_scaled, y_final)
     if model_type in ['random_forest', 'both']:
-        models_to_train.append(('RandomForest', RFClassifier(cfg=cfg.model.random_forest)))
-    
-    # Store results for model selection
-    results = {}
-    
-    for model_name, model in models_to_train:
-        print(f"\n   --- {model_name} ---")
-        
-        # Train on training set
-        model.fit(X_final, y_final)
-        
-        # Evaluate on validation set (for model selection)
-        if use_validation and len(X_val) > 0:
-            val_preds = model.predict(X_val_scaled)
-            val_acc = accuracy_score(y_val, val_preds)
-            print(f"   Validation Accuracy: {val_acc*100:.2f}%")
-            results[model_name] = {'model': model, 'val_acc': val_acc}
-        else:
-            results[model_name] = {'model': model, 'val_acc': None}
-    
-    # Select best model based on validation accuracy
-    if use_validation and len(results) > 1:
-        best_model_name = max(results, key=lambda x: results[x]['val_acc'] or 0)
-        print(f"\n   Best model (by validation): {best_model_name}")
-    else:
-        best_model_name = list(results.keys())[0]
-    
-    best_model = results[best_model_name]['model']
+        rf_final = RFClassifier(cfg=cfg.model.random_forest)
+        rf_final.fit(X_final_scaled, y_final)
     
     # ==========================================
     # 11. Final Evaluation on Test Set
     # ==========================================
-    print(f"\n11. Final Evaluation ({best_model_name} on Test Set)...")
+    print(f"\n11. Final Evaluation on Test Set...")
     
-    # Predict on test set
-    predictions = best_model.predict(X_test_scaled)
-    
-    # Calculate metrics using sklearn
-    accuracy = accuracy_score(y_test, predictions)
-    precision = precision_score(y_test, predictions, average='weighted', zero_division=0)
-    recall = recall_score(y_test, predictions, average='weighted', zero_division=0)
-    f1 = f1_score(y_test, predictions, average='weighted', zero_division=0)
-    
-    print(f"\n   Overall Metrics:")
-    print(f"   {'='*40}")
-    print(f"   Accuracy:  {accuracy*100:.2f}%")
-    print(f"   Precision: {precision*100:.2f}% (weighted)")
-    print(f"   Recall:    {recall*100:.2f}% (weighted)")
-    print(f"   F1-Score:  {f1*100:.2f}% (weighted)")
-    
-    # Detailed classification report
-    print(f"\n   Per-Class Report:")
-    print(f"   {'='*40}")
     class_names = dataset.class_names
-    print(classification_report(y_test, predictions, target_names=class_names, zero_division=0))
     
+    if model_type in ['knn', 'both']:
+        print(f"\n   --- Evaluation: KNN (k={best_k}) ---")
+        knn_predictions = knn_final.predict(X_test_scaled)
+        
+        # Calculate metrics
+        knn_accuracy = accuracy_score(y_test, knn_predictions)
+        knn_precision = precision_score(y_test, knn_predictions, average='weighted', zero_division=0)
+        knn_recall = recall_score(y_test, knn_predictions, average='weighted', zero_division=0)
+        knn_f1 = f1_score(y_test, knn_predictions, average='weighted', zero_division=0)
+        
+        print(f"\n   Metrics:")
+        print(f"   {'='*40}")
+        print(f"   Accuracy:  {knn_accuracy*100:.2f}%")
+        print(f"   Precision: {knn_precision*100:.2f}% (weighted)")
+        print(f"   Recall:    {knn_recall*100:.2f}% (weighted)")
+        print(f"   F1-Score:  {knn_f1*100:.2f}% (weighted)")
+        
+        print(f"\n   Per-Class Report:")
+        print(f"   {'='*40}")
+        print(classification_report(y_test, knn_predictions, target_names=class_names, zero_division=0))
+
+    if model_type in ['random_forest', 'both']:
+        print(f"\n   --- Evaluation: Random Forest ---")
+        rf_predictions = rf_final.predict(X_test_scaled)
+        
+        # Calculate metrics
+        rf_accuracy = accuracy_score(y_test, rf_predictions)
+        rf_precision = precision_score(y_test, rf_predictions, average='weighted', zero_division=0)
+        rf_recall = recall_score(y_test, rf_predictions, average='weighted', zero_division=0)
+        rf_f1 = f1_score(y_test, rf_predictions, average='weighted', zero_division=0)
+        
+        print(f"\n   Metrics:")
+        print(f"   {'='*40}")
+        print(f"   Accuracy:  {rf_accuracy*100:.2f}%")
+        print(f"   Precision: {rf_precision*100:.2f}% (weighted)")
+        print(f"   Recall:    {rf_recall*100:.2f}% (weighted)")
+        print(f"   F1-Score:  {rf_f1*100:.2f}% (weighted)")
+        
+        print(f"\n   Per-Class Report:")
+        print(f"   {'='*40}")
+        print(classification_report(y_test, rf_predictions, target_names=class_names, zero_division=0))
+    
+
+    # ==========================================
+    # 12. Explainability (Project Requirement)
+    # ==========================================
+    print(f"\n12. Explainability (Feature Importance)...")
+    
+    # Get importance scores
+    importances = rf_final.get_feature_importance()
+    feature_names = extractor.get_feature_names()
+    
+    if importances is not None and feature_names is not None:
+        # Sort features by importance
+        indices = np.argsort(importances)[::-1]
+        
+        print(f"   Which signal features mattered most?")
+        print(f"   {'='*40}")
+        print(f"   {'Rank':<5} | {'Feature':<20} | {'Importance':<10}")
+        print(f"   {'-'*40}")
+        
+        for f in range(len(feature_names)):
+            idx = indices[f]
+            print(f"   {f+1:<5} | {feature_names[idx]:<20} | {importances[idx]*100:.1f}%")
+            
+        print(f"\n   Observation: The model relies mostly on '{feature_names[indices[0]]}'")
+        print(f"   to distinguish between bird species.")
+
     print("\n" + "="*40)
     print("Pipeline Complete!")
 

@@ -23,20 +23,11 @@ if TYPE_CHECKING:
 
 
 class SpectralAnalysisPipeline:
-    """
-    Pipeline for frequency-domain spectral analysis of audio signals.
-    
-    All spectral methods are implemented from scratch, including
-    the Discrete Fourier Transform (DFT), without using np.fft or similar.
-    """
-    
+    """ Pipeline for frequency-domain spectral analysis of audio signals. """
+
     def __init__(self, cfg: Optional[Any] = None):
-        """
-        Initialize the Spectral Analysis Pipeline.
-        
-        Args:
-            cfg: Hydra configuration object or None for defaults.
-        """
+        """ Initialize the Spectral Analysis Pipeline. """
+
         if cfg is not None:
             spectral_cfg = cfg.get('analysis', {}).get('spectral', {})
             self.n_fft = spectral_cfg.get('n_fft', 2048)
@@ -66,7 +57,7 @@ class SpectralAnalysisPipeline:
             self.single_file = None
             self.folder_path = None
             self.sample_rate = 22050
-            self.max_duration = 30.0  # Analyze max 30 seconds by default
+            self.max_duration = 30.0
     
     # =========================================================================
     # Audio Loading Utilities
@@ -110,9 +101,7 @@ class SpectralAnalysisPipeline:
         """Create a window function from scratch."""
         if self.window_type == 'none' or self.window_type is None:
             return np.ones(size, dtype=np.float32)
-        
         window = np.zeros(size, dtype=np.float32)
-        
         if self.window_type == 'hann':
             for n in range(size):
                 window[n] = 0.5 * (1.0 - np.cos(2.0 * np.pi * n / (size - 1)))
@@ -121,7 +110,6 @@ class SpectralAnalysisPipeline:
                 window[n] = 0.54 - 0.46 * np.cos(2.0 * np.pi * n / (size - 1))
         else:
             window = np.ones(size, dtype=np.float32)
-        
         return window
     
     # =========================================================================
@@ -129,7 +117,7 @@ class SpectralAnalysisPipeline:
     # =========================================================================
 
     def dft(self, signal: np.ndarray) -> np.ndarray:
-        """Compute the Discrete Fourier Transform from scratch (O(N^2))."""
+        """Compute the Discrete Fourier Transform from scratch."""
         n = len(signal)
         result = np.zeros(n, dtype=np.complex128)
 
@@ -193,18 +181,15 @@ class SpectralAnalysisPipeline:
         window = self._create_window(self.n_fft)
         window_sum = window.sum()
         
-        # Calculate number of segments for averaging (Welch's method)
         # Use 50% overlap for better frequency resolution
         hop = self.n_fft // 2
         n_segments = max(1, (n_samples - self.n_fft) // hop + 1)
-        
+    
         n_positive = self.n_fft // 2 + 1
         avg_magnitudes = np.zeros(n_positive)
-        
         for seg_idx in range(n_segments):
             start = seg_idx * hop
             end = start + self.n_fft
-            
             if end <= n_samples:
                 segment = samples[start:end] * window
             else:
@@ -217,8 +202,6 @@ class SpectralAnalysisPipeline:
                     continue
             
             spectrum = self.fft(segment)
-            
-            # Accumulate magnitudes
             for i in range(n_positive):
                 real = spectrum[i].real
                 imag = spectrum[i].imag
