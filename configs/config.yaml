@@ -4,14 +4,66 @@
 data:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
-  sample_rate: 22050
+  # Split ratios (must sum to 1.0)
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  seed : 42  # Random seed for reproducibility
+
+# Preprocessing settings
+preprocessing:
+  enabled: false              # Enable/disable preprocessing pipeline
+  test_mode: true             # If true, process only a few files for quick testing (works even if enabled=false)
+  test_files: ["XC154310", "XC189044", "XC217762", "XC325225", "XC182410"]
+                              # empty = first file, or list specific files by stem or index
+  sample_rate: 22050          # Target sample rate for processed audio
+  highpass_cutoff: 1000       # Hz - removes low-freq rumble (wind, traffic)
+  lowpass_cutoff: 8000        # Hz - removes high-freq hiss (most birds: 1-8 kHz)
+  gate_threshold_db: -40      # dB threshold for spectral gate
+  skip_filters: false         # Skip highpass/lowpass FIR filters
+  skip_spectral_gate: false   # Skip frequency-domain spectral gate
+  n_workers: 4                # Number of parallel workers (0 = no parallelism)
+
+# Analysis settings
+analysis:
+  # Data Exploration (time-domain) settings
+  exploration:
+    enabled: false            # Enable/disable this pipeline
+    print_details: true      # Automatically print analysis details
+    run_mode: "folder"        # Options: "single", "folder", "train", "dataset"
+    single_file: data/test/XC142329.mp3        # Path to single file (used when run_mode="single")
+    folder_path: data/folder        # Path to folder (used when run_mode="folder")
+    frame_ms: null           # Frame size in ms for frame-wise analysis (null = whole file)
+    output_dir: "outputs/temp_time"  # Output directory for plots
+    save_plots: true
+    show_plots: false
+  
+  # Spectral Analysis (frequency-domain) settings
+  spectral:
+    enabled: false            # Enable/disable this pipeline
+    print_details: true      # Automatically print analysis details
+    run_mode: "folder"        # Options: "single", "folder", "train", "dataset"
+    single_file: null        # Path to single file (used when run_mode="single")
+    folder_path: data/folder        # Path to folder (used when run_mode="folder")
+    n_fft: 512            # FFT window size
+    hop_length: 256          # Hop length for STFT/spectrogram
+    window: "hann"           # Window type: 'hann', 'hamming', or 'none'
+    output_dir: "outputs/temp_freq"  # Output directory for plots
+    save_plots: true
+    show_plots: false
+    max_duration: 30.0      # Max duration (in seconds) to process for each audio file
 
 # Model settings
-model:
-  num_classes: 10  # Number of bird species
-
-# Training settings
-training:
-  batch_size: 32
-  epochs: 50
-  learning_rate: 0.001
+model:  
+  # Model selection - which models to train and evaluate
+  # Options: "knn", "random_forest", "both"
+  type: "both"
+  
+  # KNN hyperparameters
+  knn:
+    k: 5                      # Number of neighbors
+  
+  # Random Forest hyperparameters
+  random_forest:
+    n_estimators: 100         # Number of trees
+    max_depth: null           # Max tree depth (null = unlimited)

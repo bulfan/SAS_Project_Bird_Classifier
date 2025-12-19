@@ -1,0 +1,557 @@
+"""
+Spectral Analysis Pipeline for Bird Sound Classification.
+Metrics computed:
+- Power Spectral Density (PSD)
+- Spectrogram
+- Average Power
+- Max/Min Frequency
+- Max/Min Magnitude (Power)
+"""
+
+from pathlib import Path
+from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
+import numpy as np
+from pydub import AudioSegment
+import matplotlib.pyplot as plt
+
+if TYPE_CHECKING:
+    from src.data.dataset import BirdSoundDataset
+
+
+class SpectralAnalysisPipeline:
+    """ Pipeline for frequency-domain spectral analysis of audio signals. """
+
+    def __init__(self, cfg: Optional[Any] = None):
+        """ Initialize the Spectral Analysis Pipeline. """
+
+        if cfg is not None:
+            spectral_cfg = cfg.get('analysis', {}).get('spectral', {})
+            self.n_fft = spectral_cfg.get('n_fft', 2048)
+            self.hop_length = spectral_cfg.get('hop_length', 512)
+            self.window_type = spectral_cfg.get('window', 'hann')
+            self.output_dir = Path(spectral_cfg.get('output_dir', 'outputs/frequency'))
+            self.save_plots = spectral_cfg.get('save_plots', True)
+            self.show_plots = spectral_cfg.get('show_plots', False)
+            self.print_details = spectral_cfg.get('print_details', True)
+            self.enabled = spectral_cfg.get('enabled', True)
+            self.run_mode = spectral_cfg.get('run_mode', 'single')
+            self.single_file = spectral_cfg.get('single_file', None)
+            self.folder_path = spectral_cfg.get('folder_path', None)
+            self.sample_rate = cfg.get('data', {}).get('sample_rate', 22050)
+            # Max duration in seconds to analyze (prevents crashes on long files)
+            self.max_duration = spectral_cfg.get('max_duration', 30.0)
+        else:
+            self.n_fft = 2048
+            self.hop_length = 512
+            self.window_type = 'hann'
+            self.output_dir = Path('outputs/frequency')
+            self.save_plots = True
+            self.show_plots = False
+            self.print_details = True
+            self.enabled = True
+            self.run_mode = 'single'
+            self.single_file = None
+            self.folder_path = None
+            self.sample_rate = 22050
+            self.max_duration = 30.0
+    
+    # =========================================================================
+    # Audio Loading Utilities
+    # =========================================================================
+    
+    def load_audio(self, file_path: str, limit_duration: bool = True) -> Tuple[np.ndarray, int]:
+        """ Load audio file and convert to normalized numpy array."""
+        seg = AudioSegment.from_file(file_path)
+        samples = np.array(seg.get_array_of_samples())
+        
+        if seg.channels > 1:
+            samples = samples.reshape((-1, seg.channels))
+            samples = samples.mean(axis=1)
+        
+        sample_width_bits = seg.sample_width * 8
+        max_val = float(2 ** (sample_width_bits - 1))
+        samples = samples.astype(np.float32) / max_val
+        
+        # Limit duration to prevent crashes on very long files
+        if limit_duration and self.max_duration is not None:
+            max_samples = int(seg.frame_rate * self.max_duration)
+            if len(samples) > max_samples:
+                samples = samples[:max_samples]
+        
+        return samples, seg.frame_rate
+    
+    # =========================================================================
+    # Window Functions
+    # =========================================================================
+    
+    def _create_window(self, size: int) -> np.ndarray:
+        """Create a window function from scratch."""
+        if self.window_type == 'none' or self.window_type is None:
+            return np.ones(size, dtype=np.float32)
+        window = np.zeros(size, dtype=np.float32)
+        if self.window_type == 'hann':
+            for n in range(size):
+                window[n] = 0.5 * (1.0 - np.cos(2.0 * np.pi * n / (size - 1)))
+        elif self.window_type == 'hamming':
+            for n in range(size):
+                window[n] = 0.54 - 0.46 * np.cos(2.0 * np.pi * n / (size - 1))
+        else:
+            window = np.ones(size, dtype=np.float32)
+        return window
+    
+    # =========================================================================
+    # Discrete Fourier Transform
+    # =========================================================================
+
+    def dft(self, signal: np.ndarray) -> np.ndarray:
+        """Compute the Discrete Fourier Transform from scratch"""
+        n = len(signal)
+        result = np.zeros(n, dtype=np.complex128)
+        for k in range(n):
+            for t in range(n):
+                angle = -2.0 * np.pi * k * t / n
+                real_part = np.cos(angle)
+                imag_part = np.sin(angle)
+                result[k] += signal[t] * (real_part + 1j * imag_part)
+        return result
+
+    def fft(self, signal: np.ndarray) -> np.ndarray:
+        """Iterative Cooley-Tukey FFT."""
+        n = len(signal)
+        if n & (n - 1) != 0:
+            next_pow2 = 1
+            while next_pow2 < n:
+                next_pow2 <<= 1
+            padded = np.zeros(next_pow2, dtype=np.float64)
+            padded[:n] = signal
+            signal = padded
+            n = next_pow2
+
+        x = np.asarray(signal, dtype=np.complex128)
+        levels = int(np.log2(n))
+
+        # Bit reversal permutation
+        bit_rev_indices = np.zeros(n, dtype=int)
+        for i in range(n):
+            b = '{:0{width}b}'.format(i, width=levels)
+            bit_rev_indices[i] = int(b[::-1], 2)
+        x = x[bit_rev_indices]
+
+        # Precompute twiddle factors for each stage (optimization)
+        size = 2
+        while size <= n:
+            half_size = size // 2
+            # Precompute twiddles for this stage
+            twiddles = np.exp(-2j * np.pi * np.arange(half_size) / size)
+            for i in range(0, n, size):
+                for j in range(half_size):
+                    temp = x[i + j + half_size] * twiddles[j]
+                    x[i + j + half_size] = x[i + j] - temp
+                    x[i + j] = x[i + j] + temp
+            size *= 2
+        return x
+    
+    # =========================================================================
+    # Spectral Analysis Methods
+    # =========================================================================
+    
+    def compute_magnitude_spectrum(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute the magnitude spectrum of the signal using Welch's method"""
+        n_samples = len(samples)
+        window = self._create_window(self.n_fft)
+        window_sum = window.sum()
+        hop = self.n_fft // 2
+        n_segments = max(1, (n_samples - self.n_fft) // hop + 1)
+        n_positive = self.n_fft // 2 + 1
+        avg_magnitudes = np.zeros(n_positive)
+        for seg_idx in range(n_segments):
+            start = seg_idx * hop
+            end = start + self.n_fft
+            if end <= n_samples:
+                segment = samples[start:end] * window
+            else:
+                # Pad last segment if needed
+                segment = np.zeros(self.n_fft)
+                available = n_samples - start
+                if available > 0:
+                    segment[:available] = samples[start:start + available] * window[:available]
+                else:
+                    continue
+            spectrum = self.fft(segment)
+            for i in range(n_positive):
+                real = spectrum[i].real
+                imag = spectrum[i].imag
+                avg_magnitudes[i] += np.sqrt(real * real + imag * imag)
+        
+        # Average over segments
+        if n_segments > 0:
+            avg_magnitudes = avg_magnitudes / n_segments
+        
+        # Normalize by window sum for one-sided spectrum
+        if window_sum > 0:
+            avg_magnitudes = avg_magnitudes * (2.0 / window_sum)
+            avg_magnitudes[0] = avg_magnitudes[0] / 2.0
+            avg_magnitudes[-1] = avg_magnitudes[-1] / 2.0
+        frequencies = np.zeros(n_positive)
+        freq_resolution = self.sample_rate / self.n_fft
+        for i in range(n_positive):
+            frequencies[i] = i * freq_resolution
+        return frequencies, avg_magnitudes
+    
+    def compute_power_spectral_density(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute Power Spectral Density (PSD) of the signal."""
+        # PSD is magnitude squared, normalized by sample rate to get power per Hz
+        frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
+        psd = np.zeros(len(magnitudes))
+        for i in range(len(magnitudes)):
+            psd[i] = (magnitudes[i] * magnitudes[i]) / self.sample_rate
+        return frequencies, psd
+    
+    def compute_spectrogram(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Compute spectrogram using Short-Time Fourier Transform (STFT).
+        Optimized to prevent memory issues and terminal crashes.
+        """
+        n_samples = len(samples)
+        window = self._create_window(self.n_fft)
+        n_frames = 1 + (n_samples - self.n_fft) // self.hop_length
+        if n_frames < 1:
+            n_frames = 1
+        n_freqs = self.n_fft // 2 + 1
+        spectrogram = np.zeros((n_freqs, n_frames))
+        
+        # Normalize by window sum for consistent scaling
+        window_sum = window.sum()
+        scale_factor = 2.0 / window_sum if window_sum > 0 else 1.0
+        
+        # Process in batches to avoid memory issues and show progress
+        batch_size = 100
+        total_batches = (n_frames + batch_size - 1) // batch_size
+        for batch_idx in range(total_batches):
+            start_frame = batch_idx * batch_size
+            end_frame = min(start_frame + batch_size, n_frames)
+            for frame_idx in range(start_frame, end_frame):
+                start = frame_idx * self.hop_length
+                end = start + self.n_fft
+                if end <= n_samples:
+                    frame = samples[start:end] * window
+                else:
+                    frame = np.zeros(self.n_fft)
+                    available = n_samples - start
+                    if available > 0:
+                        frame[:available] = samples[start:start + available]
+                    frame = frame * window
+                spectrum = self.fft(frame)
+                
+                # Vectorized magnitude calculation (faster than loop)
+                magnitudes = np.abs(spectrum[:n_freqs]) * scale_factor
+                magnitudes[0] /= 2.0  # DC component
+                magnitudes[-1] /= 2.0  # Nyquist component
+                spectrogram[:, frame_idx] = magnitudes
+        times = (np.arange(n_frames) * self.hop_length + self.n_fft / 2) / self.sample_rate
+        frequencies = np.arange(n_freqs) * (self.sample_rate / self.n_fft)
+        return times, frequencies, spectrogram
+    
+    def compute_average_power(self, samples: np.ndarray) -> float:
+        """Compute average power in the frequency domain."""
+        _, psd = self.compute_power_spectral_density(samples)
+        if len(psd) == 0:
+            return 0.0
+        return float(np.mean(psd))
+    
+    def compute_frequency_range(self, samples: np.ndarray, threshold_db: float = -60.0) -> Tuple[float, float]:
+        """Compute min and max frequency with significant energy."""
+        frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
+        if len(magnitudes) == 0:
+            return 0.0, 0.0
+        max_mag = np.max(magnitudes)
+        if max_mag == 0:
+            return 0.0, 0.0
+        threshold_linear = max_mag * (10.0 ** (threshold_db / 20.0))
+        indices = np.where(magnitudes >= threshold_linear)[0]
+        if len(indices) == 0:
+            return 0.0, 0.0
+        min_freq = frequencies[indices[0]]
+        max_freq = frequencies[indices[-1]]
+        return float(min_freq), float(max_freq)
+    
+    def compute_magnitude_range(self, samples: np.ndarray) -> Tuple[float, float, float, float]:
+        """Compute min/max magnitude and their corresponding frequencies."""
+        frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
+        if len(magnitudes) == 0:
+            return 0.0, 0.0, 0.0, 0.0
+        min_mag = magnitudes[1] if len(magnitudes) > 1 else magnitudes[0]
+        max_mag = magnitudes[1] if len(magnitudes) > 1 else magnitudes[0]
+        min_idx = 1 if len(magnitudes) > 1 else 0
+        max_idx = 1 if len(magnitudes) > 1 else 0
+        for i in range(1, len(magnitudes)):
+            if magnitudes[i] < min_mag:
+                min_mag = magnitudes[i]
+                min_idx = i
+            if magnitudes[i] > max_mag:
+                max_mag = magnitudes[i]
+                max_idx = i
+        return (float(min_mag), float(max_mag),
+                float(frequencies[min_idx]), float(frequencies[max_idx]))
+    
+    # =========================================================================
+    # Analysis Pipeline
+    # =========================================================================
+    
+    def analyze(self, file_path: str) -> Dict[str, Any]:
+        """Run full spectral analysis on an audio file."""
+        samples, sample_rate = self.load_audio(file_path)
+        self.sample_rate = sample_rate
+        min_freq, max_freq = self.compute_frequency_range(samples)
+        min_mag, max_mag, freq_at_min, freq_at_max = self.compute_magnitude_range(samples)
+        
+        results = {
+            'file_path': file_path,
+            'file_name': Path(file_path).name,
+            'sample_rate': sample_rate,
+            'n_fft': self.n_fft,
+            'average_power': self.compute_average_power(samples),
+            'min_frequency_hz': min_freq,
+            'max_frequency_hz': max_freq,
+            'min_magnitude': min_mag,
+            'max_magnitude': max_mag,
+            'frequency_at_min_magnitude': freq_at_min,
+            'frequency_at_max_magnitude': freq_at_max,
+            'dominant_frequency_hz': freq_at_max}
+        return results
+    
+    # =========================================================================
+    # Print Details
+    # =========================================================================
+    
+    def print_analysis_results(self, results: Dict[str, Any]) -> None:
+        """Print analysis results in a formatted way."""
+        if not self.print_details:
+            return
+        
+        print(f"\n   Spectral Analysis: {results.get('file_name', 'Unknown')}")
+        print(f"   {'-' * 50}")
+        print(f"   Sample Rate: {results['sample_rate']} Hz | FFT Size: {results['n_fft']}")
+        print(f"   Average Power: {results['average_power']:.6f}")
+        print(f"   Frequency Range: [{results['min_frequency_hz']:.1f}, "
+              f"{results['max_frequency_hz']:.1f}] Hz")
+        print(f"   Dominant Frequency: {results['dominant_frequency_hz']:.1f} Hz")
+        print(f"   Magnitude Range: [{results['min_magnitude']:.4f}, "
+              f"{results['max_magnitude']:.4f}]")
+    
+    def print_batch_summary(self, all_results: List[Dict[str, Any]]) -> None:
+        """Print summary statistics for batch analysis."""
+        if not self.print_details or not all_results:
+            return
+        
+        print(f"\n   Batch Summary ({len(all_results)} files)")
+        print(f"   {'-' * 50}")
+        
+        metrics = ['average_power', 'dominant_frequency_hz', 'min_frequency_hz', 'max_frequency_hz']
+        for metric in metrics:
+            values = [r[metric] for r in all_results if metric in r]
+            if values:
+                mean_val = sum(values) / len(values)
+                min_val = min(values)
+                max_val = max(values)
+                print(f"   {metric}: mean={mean_val:.2f}, min={min_val:.2f}, max={max_val:.2f}")
+    
+    # =========================================================================
+    # Visualization
+    # =========================================================================
+    
+    def _ensure_output_dir(self, class_name: Optional[str] = None) -> Path:
+        """Ensure output directory exists and return path."""
+        if class_name:
+            output_path = self.output_dir / class_name
+        else:
+            output_path = self.output_dir
+        
+        if self.save_plots:
+            output_path.mkdir(parents=True, exist_ok=True)
+        
+        return output_path
+    
+    def plot_magnitude_spectrum(self, file_path: str, class_name: Optional[str] = None,
+                                file_id: Optional[str] = None, log_scale: bool = True) -> None:
+        """Plot the magnitude spectrum of an audio file."""
+        samples, sample_rate = self.load_audio(file_path)
+        self.sample_rate = sample_rate
+        frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
+        fig, ax = plt.subplots(figsize=(12, 4))
+        
+        if log_scale:
+            eps = 1e-10
+            magnitudes_db = 20 * np.log10(magnitudes + eps)
+            ax.plot(frequencies, magnitudes_db, linewidth=0.8, color='steelblue')
+            ax.set_ylabel('Magnitude (dB)')
+        else:
+            ax.plot(frequencies, magnitudes, linewidth=0.8, color='steelblue')
+            ax.set_ylabel('Magnitude')
+        ax.set_xlabel('Frequency (Hz)')
+        ax.set_title(f'Magnitude Spectrum: {Path(file_path).name}')
+        ax.set_xlim(0, sample_rate / 2)
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        if self.save_plots:
+            output_path = self._ensure_output_dir(class_name)
+            if file_id:
+                save_path = output_path / f'{file_id}_spectrum.png'
+            else:
+                save_path = output_path / 'spectrum.png'
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        if self.show_plots:
+            plt.show()
+        else:
+            plt.close()
+    
+    def plot_psd(self, file_path: str, class_name: Optional[str] = None, file_id: Optional[str] = None) -> None:
+        """Plot Power Spectral Density."""
+        samples, sample_rate = self.load_audio(file_path)
+        self.sample_rate = sample_rate
+        frequencies, psd = self.compute_power_spectral_density(samples)
+        fig, ax = plt.subplots(figsize=(12, 4))
+        eps = 1e-10
+        psd_db = 10 * np.log10(psd + eps)
+        
+        ax.plot(frequencies, psd_db, linewidth=0.8, color='darkgreen')
+        ax.set_xlabel('Frequency (Hz)')
+        ax.set_ylabel('Power/Frequency (dB/Hz)')
+        ax.set_title(f'Power Spectral Density: {Path(file_path).name}')
+        ax.set_xlim(0, sample_rate / 2)
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        if self.save_plots:
+            output_path = self._ensure_output_dir(class_name)
+            if file_id:
+                save_path = output_path / f'{file_id}_psd.png'
+            else:
+                save_path = output_path / 'psd.png'
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        if self.show_plots:
+            plt.show()
+        else:
+            plt.close()
+    
+    def plot_spectrogram(self, file_path: str, class_name: Optional[str] = None, file_id: Optional[str] = None,
+                         log_scale: bool = True, cmap: str = 'viridis') -> None:
+        """Plot spectrogram of an audio file."""
+        samples, sample_rate = self.load_audio(file_path)
+        self.sample_rate = sample_rate
+        times, frequencies, spectrogram = self.compute_spectrogram(samples)
+        fig, ax = plt.subplots(figsize=(12, 6))
+        if log_scale:
+            eps = 1e-10
+            spectrogram_db = 20 * np.log10(spectrogram + eps)
+            im = ax.pcolormesh(times, frequencies, spectrogram_db, shading='gouraud', cmap=cmap)
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Magnitude (dB)')
+            ax.set_yscale('log')
+            max_freq = sample_rate / 2
+            band_ticks = [t for t in [100, 500, 1000, 5000, 10000, max_freq] if t <= max_freq]
+            ax.set_yticks(band_ticks)
+            ax.set_yticklabels([str(int(t)) for t in band_ticks])
+            ax.set_ylim(20, max_freq)
+            ax.set_ylabel('Frequency (Hz, log scale)')
+        else:
+            im = ax.pcolormesh(times, frequencies, spectrogram, shading='gouraud', cmap=cmap)
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Magnitude')
+            ax.set_ylim(0, sample_rate / 2)
+            ax.set_ylabel('Frequency (Hz)')
+        ax.set_xlabel('Time (seconds)')
+        ax.set_title(f'Spectrogram: {Path(file_path).name}')
+        plt.tight_layout()
+        if self.save_plots:
+            output_path = self._ensure_output_dir(class_name)
+            if file_id:
+                save_path = output_path / f'{file_id}_spectrogram.png'
+            else:
+                save_path = output_path / 'spectrogram.png'
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        if self.show_plots:
+            plt.show()
+        else:
+            plt.close()
+    
+    # =========================================================================
+    # Main Run Method
+    # =========================================================================
+    
+    def run(self, dataset: Optional["BirdSoundDataset"] = None,
+            train_dataset: Optional["BirdSoundDataset"] = None) -> List[Dict[str, Any]]:
+        """Run the pipeline based on configuration."""
+        if not self.enabled:
+            print("   Spectral Analysis Pipeline is disabled.")
+            return []
+        
+        print("\n   Running Spectral Analysis Pipeline (Frequency-Domain)...")
+        print(f"   Mode: {self.run_mode}")
+        
+        all_results = []
+        if self.run_mode == 'single':
+            if self.single_file:
+                results = self.analyze(self.single_file)
+                results['class_label'] = 'single'
+                all_results.append(results)
+                self.print_analysis_results(results)
+                self._generate_all_plots(self.single_file, class_name='single')
+            else:
+                print("   Warning: No single_file specified in config.")
+        elif self.run_mode == 'folder':
+            if self.folder_path:
+                folder = Path(self.folder_path)
+                if folder.exists():
+                    class_name = folder.name
+                    audio_files = list(folder.glob('*.mp3')) + list(folder.glob('*.wav'))
+                    print(f"   Processing {len(audio_files)} files from {class_name}...")
+                    for audio_file in audio_files:
+                        results = self.analyze(str(audio_file))
+                        results['class_label'] = class_name
+                        all_results.append(results)
+                        file_id = audio_file.stem
+                        self._generate_all_plots(str(audio_file), class_name=class_name, file_id=file_id)
+                    self.print_batch_summary(all_results)
+                else:
+                    print(f"   Warning: Folder not found: {self.folder_path}")
+            else:
+                print("   Warning: No folder_path specified in config.")
+        elif self.run_mode == 'train':
+            if train_dataset and len(train_dataset) > 0:
+                print(f"   Processing {len(train_dataset)} training samples...")
+                for i in range(len(train_dataset)):
+                    file_path, label_idx = train_dataset[i]
+                    class_name = train_dataset.get_class_name(label_idx)
+                    results = self.analyze(file_path)
+                    results['class_label'] = class_name
+                    all_results.append(results)
+                    file_id = Path(file_path).stem
+                    self._generate_all_plots(file_path, class_name=class_name, file_id=file_id)
+                self.print_batch_summary(all_results)
+            else:
+                print("   Warning: No training dataset provided.")
+        elif self.run_mode == 'dataset':
+            if dataset and len(dataset) > 0:
+                print(f"   Processing {len(dataset)} samples from full dataset...")
+                for i in range(len(dataset)):
+                    file_path, label_idx = dataset[i]
+                    class_name = dataset.get_class_name(label_idx)
+                    results = self.analyze(file_path)
+                    results['class_label'] = class_name
+                    all_results.append(results)
+                    file_id = Path(file_path).stem
+                    self._generate_all_plots(file_path, class_name=class_name, file_id=file_id)
+                self.print_batch_summary(all_results)
+            else:
+                print("   Warning: No dataset provided.")
+        else:
+            print(f"   Warning: Unknown run_mode: {self.run_mode}")
+        if self.save_plots and all_results:
+            print(f"   Plots saved to: {self.output_dir}")
+        return all_results
+    
+    def _generate_all_plots(self, file_path: str, class_name: Optional[str] = None, file_id: Optional[str] = None) -> None:
+        """Generate all spectral plots for a file."""
+        self.plot_magnitude_spectrum(file_path, class_name=class_name, file_id=file_id)
+        self.plot_psd(file_path, class_name=class_name, file_id=file_id)
+        self.plot_spectrogram(file_path, class_name=class_name, file_id=file_id)
