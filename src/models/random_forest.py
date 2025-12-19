@@ -10,14 +10,7 @@ class RFClassifier:
     def __init__(self, cfg: Optional[Any] = None, 
                  n_estimators: int = 100, 
                  max_depth: Optional[int] = None):
-        """
-        Initialize Random Forest classifier.
-        
-        Args:
-            cfg: Optional config object (e.g., cfg.model.random_forest)
-            n_estimators: Number of trees in the forest
-            max_depth: Maximum depth of trees (None = unlimited)
-        """
+        """Initialize Random Forest classifier."""
         if cfg is not None:
             n_estimators = getattr(cfg, 'n_estimators', n_estimators)
             max_depth = getattr(cfg, 'max_depth', max_depth)
@@ -38,7 +31,7 @@ class RFClassifier:
         return self.model.predict(X)
     
     def get_feature_importance(self):
-        """Returns the feature importances (scores) from the trained model."""
+        """Returns the feature importances scores from the trained model."""
         if hasattr(self.model, 'feature_importances_'):
             return self.model.feature_importances_
         else:

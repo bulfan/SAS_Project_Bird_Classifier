@@ -1,9 +1,5 @@
 """
 Spectral Analysis Pipeline for Bird Sound Classification.
-
-Frequency-domain analysis of audio signals using Fourier Transform.
-Implements all algorithms from scratch (no numpy.fft or similar).
-
 Metrics computed:
 - Power Spectral Density (PSD)
 - Spectrogram
@@ -64,16 +60,7 @@ class SpectralAnalysisPipeline:
     # =========================================================================
     
     def load_audio(self, file_path: str, limit_duration: bool = True) -> Tuple[np.ndarray, int]:
-        """
-        Load audio file and convert to normalized numpy array.
-        
-        Args:
-            file_path: Path to audio file.
-            limit_duration: If True, limit to max_duration seconds to prevent crashes.
-        
-        Returns:
-            Tuple of (samples, sample_rate)
-        """
+        """ Load audio file and convert to normalized numpy array."""
         seg = AudioSegment.from_file(file_path)
         samples = np.array(seg.get_array_of_samples())
         
@@ -94,7 +81,7 @@ class SpectralAnalysisPipeline:
         return samples, seg.frame_rate
     
     # =========================================================================
-    # Window Functions (Implemented from Scratch)
+    # Window Functions
     # =========================================================================
     
     def _create_window(self, size: int) -> np.ndarray:
@@ -113,25 +100,23 @@ class SpectralAnalysisPipeline:
         return window
     
     # =========================================================================
-    # Discrete Fourier Transform (Implemented from Scratch)
+    # Discrete Fourier Transform
     # =========================================================================
 
     def dft(self, signal: np.ndarray) -> np.ndarray:
-        """Compute the Discrete Fourier Transform from scratch."""
+        """Compute the Discrete Fourier Transform from scratch"""
         n = len(signal)
         result = np.zeros(n, dtype=np.complex128)
-
         for k in range(n):
             for t in range(n):
                 angle = -2.0 * np.pi * k * t / n
                 real_part = np.cos(angle)
                 imag_part = np.sin(angle)
                 result[k] += signal[t] * (real_part + 1j * imag_part)
-
         return result
 
     def fft(self, signal: np.ndarray) -> np.ndarray:
-        """Iterative Cooley-Tukey FFT (radix-2 DIT) for speed."""
+        """Iterative Cooley-Tukey FFT."""
         n = len(signal)
         if n & (n - 1) != 0:
             next_pow2 = 1
@@ -145,7 +130,7 @@ class SpectralAnalysisPipeline:
         x = np.asarray(signal, dtype=np.complex128)
         levels = int(np.log2(n))
 
-        # Bit-reversal permutation
+        # Bit reversal permutation
         bit_rev_indices = np.zeros(n, dtype=int)
         for i in range(n):
             b = '{:0{width}b}'.format(i, width=levels)
@@ -171,20 +156,12 @@ class SpectralAnalysisPipeline:
     # =========================================================================
     
     def compute_magnitude_spectrum(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Compute the magnitude spectrum of the signal.
-        
-        Uses Welch's method: averages multiple overlapping windows to get
-        a more representative spectrum of the entire signal.
-        """
+        """Compute the magnitude spectrum of the signal using Welch's method"""
         n_samples = len(samples)
         window = self._create_window(self.n_fft)
         window_sum = window.sum()
-        
-        # Use 50% overlap for better frequency resolution
         hop = self.n_fft // 2
         n_segments = max(1, (n_samples - self.n_fft) // hop + 1)
-    
         n_positive = self.n_fft // 2 + 1
         avg_magnitudes = np.zeros(n_positive)
         for seg_idx in range(n_segments):
@@ -200,7 +177,6 @@ class SpectralAnalysisPipeline:
                     segment[:available] = samples[start:start + available] * window[:available]
                 else:
                     continue
-            
             spectrum = self.fft(segment)
             for i in range(n_positive):
                 real = spectrum[i].real
@@ -214,40 +190,33 @@ class SpectralAnalysisPipeline:
         # Normalize by window sum for one-sided spectrum
         if window_sum > 0:
             avg_magnitudes = avg_magnitudes * (2.0 / window_sum)
-            avg_magnitudes[0] = avg_magnitudes[0] / 2.0  # DC component is single-sided
-            avg_magnitudes[-1] = avg_magnitudes[-1] / 2.0  # Nyquist is single-sided
-        
+            avg_magnitudes[0] = avg_magnitudes[0] / 2.0
+            avg_magnitudes[-1] = avg_magnitudes[-1] / 2.0
         frequencies = np.zeros(n_positive)
         freq_resolution = self.sample_rate / self.n_fft
         for i in range(n_positive):
             frequencies[i] = i * freq_resolution
-        
         return frequencies, avg_magnitudes
     
     def compute_power_spectral_density(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Compute Power Spectral Density (PSD) of the signal."""
-        frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
-        
         # PSD is magnitude squared, normalized by sample rate to get power per Hz
+        frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
         psd = np.zeros(len(magnitudes))
         for i in range(len(magnitudes)):
             psd[i] = (magnitudes[i] * magnitudes[i]) / self.sample_rate
-        
         return frequencies, psd
     
     def compute_spectrogram(self, samples: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Compute spectrogram using Short-Time Fourier Transform (STFT).
-        
         Optimized to prevent memory issues and terminal crashes.
         """
         n_samples = len(samples)
         window = self._create_window(self.n_fft)
-        
         n_frames = 1 + (n_samples - self.n_fft) // self.hop_length
         if n_frames < 1:
             n_frames = 1
-        
         n_freqs = self.n_fft // 2 + 1
         spectrogram = np.zeros((n_freqs, n_frames))
         
@@ -258,15 +227,12 @@ class SpectralAnalysisPipeline:
         # Process in batches to avoid memory issues and show progress
         batch_size = 100
         total_batches = (n_frames + batch_size - 1) // batch_size
-        
         for batch_idx in range(total_batches):
             start_frame = batch_idx * batch_size
             end_frame = min(start_frame + batch_size, n_frames)
-            
             for frame_idx in range(start_frame, end_frame):
                 start = frame_idx * self.hop_length
                 end = start + self.n_fft
-                
                 if end <= n_samples:
                     frame = samples[start:end] * window
                 else:
@@ -275,7 +241,6 @@ class SpectralAnalysisPipeline:
                     if available > 0:
                         frame[:available] = samples[start:start + available]
                     frame = frame * window
-                
                 spectrum = self.fft(frame)
                 
                 # Vectorized magnitude calculation (faster than loop)
@@ -283,11 +248,8 @@ class SpectralAnalysisPipeline:
                 magnitudes[0] /= 2.0  # DC component
                 magnitudes[-1] /= 2.0  # Nyquist component
                 spectrogram[:, frame_idx] = magnitudes
-        
-        # Compute time and frequency axes
         times = (np.arange(n_frames) * self.hop_length + self.n_fft / 2) / self.sample_rate
         frequencies = np.arange(n_freqs) * (self.sample_rate / self.n_fft)
-        
         return times, frequencies, spectrogram
     
     def compute_average_power(self, samples: np.ndarray) -> float:
@@ -300,20 +262,15 @@ class SpectralAnalysisPipeline:
     def compute_frequency_range(self, samples: np.ndarray, threshold_db: float = -60.0) -> Tuple[float, float]:
         """Compute min and max frequency with significant energy."""
         frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
-
         if len(magnitudes) == 0:
             return 0.0, 0.0
-
         max_mag = np.max(magnitudes)
         if max_mag == 0:
             return 0.0, 0.0
-
         threshold_linear = max_mag * (10.0 ** (threshold_db / 20.0))
-        
         indices = np.where(magnitudes >= threshold_linear)[0]
         if len(indices) == 0:
             return 0.0, 0.0
-
         min_freq = frequencies[indices[0]]
         max_freq = frequencies[indices[-1]]
         return float(min_freq), float(max_freq)
@@ -321,15 +278,12 @@ class SpectralAnalysisPipeline:
     def compute_magnitude_range(self, samples: np.ndarray) -> Tuple[float, float, float, float]:
         """Compute min/max magnitude and their corresponding frequencies."""
         frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
-        
         if len(magnitudes) == 0:
             return 0.0, 0.0, 0.0, 0.0
-        
         min_mag = magnitudes[1] if len(magnitudes) > 1 else magnitudes[0]
         max_mag = magnitudes[1] if len(magnitudes) > 1 else magnitudes[0]
         min_idx = 1 if len(magnitudes) > 1 else 0
         max_idx = 1 if len(magnitudes) > 1 else 0
-        
         for i in range(1, len(magnitudes)):
             if magnitudes[i] < min_mag:
                 min_mag = magnitudes[i]
@@ -337,7 +291,6 @@ class SpectralAnalysisPipeline:
             if magnitudes[i] > max_mag:
                 max_mag = magnitudes[i]
                 max_idx = i
-        
         return (float(min_mag), float(max_mag),
                 float(frequencies[min_idx]), float(frequencies[max_idx]))
     
@@ -349,7 +302,6 @@ class SpectralAnalysisPipeline:
         """Run full spectral analysis on an audio file."""
         samples, sample_rate = self.load_audio(file_path)
         self.sample_rate = sample_rate
-        
         min_freq, max_freq = self.compute_frequency_range(samples)
         min_mag, max_mag, freq_at_min, freq_at_max = self.compute_magnitude_range(samples)
         
@@ -365,9 +317,7 @@ class SpectralAnalysisPipeline:
             'max_magnitude': max_mag,
             'frequency_at_min_magnitude': freq_at_min,
             'frequency_at_max_magnitude': freq_at_max,
-            'dominant_frequency_hz': freq_at_max,
-        }
-        
+            'dominant_frequency_hz': freq_at_max}
         return results
     
     # =========================================================================
@@ -422,18 +372,12 @@ class SpectralAnalysisPipeline:
         
         return output_path
     
-    def plot_magnitude_spectrum(
-        self,
-        file_path: str,
-        class_name: Optional[str] = None,
-        file_id: Optional[str] = None,
-        log_scale: bool = True
-    ) -> None:
+    def plot_magnitude_spectrum(self, file_path: str, class_name: Optional[str] = None,
+                                file_id: Optional[str] = None, log_scale: bool = True) -> None:
         """Plot the magnitude spectrum of an audio file."""
         samples, sample_rate = self.load_audio(file_path)
         self.sample_rate = sample_rate
         frequencies, magnitudes = self.compute_magnitude_spectrum(samples)
-        
         fig, ax = plt.subplots(figsize=(12, 4))
         
         if log_scale:
@@ -444,14 +388,11 @@ class SpectralAnalysisPipeline:
         else:
             ax.plot(frequencies, magnitudes, linewidth=0.8, color='steelblue')
             ax.set_ylabel('Magnitude')
-        
         ax.set_xlabel('Frequency (Hz)')
         ax.set_title(f'Magnitude Spectrum: {Path(file_path).name}')
         ax.set_xlim(0, sample_rate / 2)
         ax.grid(True, alpha=0.3)
-        
         plt.tight_layout()
-        
         if self.save_plots:
             output_path = self._ensure_output_dir(class_name)
             if file_id:
@@ -459,25 +400,17 @@ class SpectralAnalysisPipeline:
             else:
                 save_path = output_path / 'spectrum.png'
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        
         if self.show_plots:
             plt.show()
         else:
             plt.close()
     
-    def plot_psd(
-        self,
-        file_path: str,
-        class_name: Optional[str] = None,
-        file_id: Optional[str] = None
-    ) -> None:
+    def plot_psd(self, file_path: str, class_name: Optional[str] = None, file_id: Optional[str] = None) -> None:
         """Plot Power Spectral Density."""
         samples, sample_rate = self.load_audio(file_path)
         self.sample_rate = sample_rate
         frequencies, psd = self.compute_power_spectral_density(samples)
-        
         fig, ax = plt.subplots(figsize=(12, 4))
-        
         eps = 1e-10
         psd_db = 10 * np.log10(psd + eps)
         
@@ -487,9 +420,7 @@ class SpectralAnalysisPipeline:
         ax.set_title(f'Power Spectral Density: {Path(file_path).name}')
         ax.set_xlim(0, sample_rate / 2)
         ax.grid(True, alpha=0.3)
-        
         plt.tight_layout()
-        
         if self.save_plots:
             output_path = self._ensure_output_dir(class_name)
             if file_id:
@@ -497,38 +428,25 @@ class SpectralAnalysisPipeline:
             else:
                 save_path = output_path / 'psd.png'
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        
         if self.show_plots:
             plt.show()
         else:
             plt.close()
     
-    def plot_spectrogram(
-        self,
-        file_path: str,
-        class_name: Optional[str] = None,
-        file_id: Optional[str] = None,
-        log_scale: bool = True,
-        cmap: str = 'viridis'
-    ) -> None:
+    def plot_spectrogram(self, file_path: str, class_name: Optional[str] = None, file_id: Optional[str] = None,
+                         log_scale: bool = True, cmap: str = 'viridis') -> None:
         """Plot spectrogram of an audio file."""
         samples, sample_rate = self.load_audio(file_path)
         self.sample_rate = sample_rate
         times, frequencies, spectrogram = self.compute_spectrogram(samples)
-        
         fig, ax = plt.subplots(figsize=(12, 6))
-        
         if log_scale:
             eps = 1e-10
             spectrogram_db = 20 * np.log10(spectrogram + eps)
-            im = ax.pcolormesh(times, frequencies, spectrogram_db,
-                            shading='gouraud', cmap=cmap)
+            im = ax.pcolormesh(times, frequencies, spectrogram_db, shading='gouraud', cmap=cmap)
             cbar = plt.colorbar(im, ax=ax)
             cbar.set_label('Magnitude (dB)')
-            
-            # Log scale settings
             ax.set_yscale('log')
-            # Dynamic ticks based on actual sample rate
             max_freq = sample_rate / 2
             band_ticks = [t for t in [100, 500, 1000, 5000, 10000, max_freq] if t <= max_freq]
             ax.set_yticks(band_ticks)
@@ -536,18 +454,14 @@ class SpectralAnalysisPipeline:
             ax.set_ylim(20, max_freq)
             ax.set_ylabel('Frequency (Hz, log scale)')
         else:
-            im = ax.pcolormesh(times, frequencies, spectrogram,
-                            shading='gouraud', cmap=cmap)
+            im = ax.pcolormesh(times, frequencies, spectrogram, shading='gouraud', cmap=cmap)
             cbar = plt.colorbar(im, ax=ax)
             cbar.set_label('Magnitude')
             ax.set_ylim(0, sample_rate / 2)
             ax.set_ylabel('Frequency (Hz)')
-            
         ax.set_xlabel('Time (seconds)')
         ax.set_title(f'Spectrogram: {Path(file_path).name}')
-        
         plt.tight_layout()
-        
         if self.save_plots:
             output_path = self._ensure_output_dir(class_name)
             if file_id:
@@ -555,7 +469,6 @@ class SpectralAnalysisPipeline:
             else:
                 save_path = output_path / 'spectrogram.png'
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        
         if self.show_plots:
             plt.show()
         else:
@@ -565,21 +478,9 @@ class SpectralAnalysisPipeline:
     # Main Run Method
     # =========================================================================
     
-    def run(
-        self,
-        dataset: Optional["BirdSoundDataset"] = None,
-        train_dataset: Optional["BirdSoundDataset"] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Run the pipeline based on configuration.
-        
-        Args:
-            dataset: Full dataset (used if run_mode='dataset')
-            train_dataset: Training dataset (used if run_mode='train')
-            
-        Returns:
-            List of analysis results.
-        """
+    def run(self, dataset: Optional["BirdSoundDataset"] = None,
+            train_dataset: Optional["BirdSoundDataset"] = None) -> List[Dict[str, Any]]:
+        """Run the pipeline based on configuration."""
         if not self.enabled:
             print("   Spectral Analysis Pipeline is disabled.")
             return []
@@ -588,7 +489,6 @@ class SpectralAnalysisPipeline:
         print(f"   Mode: {self.run_mode}")
         
         all_results = []
-        
         if self.run_mode == 'single':
             if self.single_file:
                 results = self.analyze(self.single_file)
@@ -598,83 +498,59 @@ class SpectralAnalysisPipeline:
                 self._generate_all_plots(self.single_file, class_name='single')
             else:
                 print("   Warning: No single_file specified in config.")
-        
         elif self.run_mode == 'folder':
             if self.folder_path:
                 folder = Path(self.folder_path)
                 if folder.exists():
                     class_name = folder.name
                     audio_files = list(folder.glob('*.mp3')) + list(folder.glob('*.wav'))
-                    
                     print(f"   Processing {len(audio_files)} files from {class_name}...")
-                    
                     for audio_file in audio_files:
                         results = self.analyze(str(audio_file))
                         results['class_label'] = class_name
                         all_results.append(results)
-                        
                         file_id = audio_file.stem
-                        self._generate_all_plots(str(audio_file), class_name=class_name,
-                                                file_id=file_id)
-                    
+                        self._generate_all_plots(str(audio_file), class_name=class_name, file_id=file_id)
                     self.print_batch_summary(all_results)
                 else:
                     print(f"   Warning: Folder not found: {self.folder_path}")
             else:
                 print("   Warning: No folder_path specified in config.")
-        
         elif self.run_mode == 'train':
             if train_dataset and len(train_dataset) > 0:
                 print(f"   Processing {len(train_dataset)} training samples...")
-                
                 for i in range(len(train_dataset)):
                     file_path, label_idx = train_dataset[i]
                     class_name = train_dataset.get_class_name(label_idx)
-                    
                     results = self.analyze(file_path)
                     results['class_label'] = class_name
                     all_results.append(results)
-                    
                     file_id = Path(file_path).stem
                     self._generate_all_plots(file_path, class_name=class_name, file_id=file_id)
-                
                 self.print_batch_summary(all_results)
             else:
                 print("   Warning: No training dataset provided.")
-        
         elif self.run_mode == 'dataset':
             if dataset and len(dataset) > 0:
                 print(f"   Processing {len(dataset)} samples from full dataset...")
-                
                 for i in range(len(dataset)):
                     file_path, label_idx = dataset[i]
                     class_name = dataset.get_class_name(label_idx)
-                    
                     results = self.analyze(file_path)
                     results['class_label'] = class_name
                     all_results.append(results)
-                    
                     file_id = Path(file_path).stem
                     self._generate_all_plots(file_path, class_name=class_name, file_id=file_id)
-                
                 self.print_batch_summary(all_results)
             else:
                 print("   Warning: No dataset provided.")
-        
         else:
             print(f"   Warning: Unknown run_mode: {self.run_mode}")
-        
         if self.save_plots and all_results:
             print(f"   Plots saved to: {self.output_dir}")
-        
         return all_results
     
-    def _generate_all_plots(
-        self,
-        file_path: str,
-        class_name: Optional[str] = None,
-        file_id: Optional[str] = None
-    ) -> None:
+    def _generate_all_plots(self, file_path: str, class_name: Optional[str] = None, file_id: Optional[str] = None) -> None:
         """Generate all spectral plots for a file."""
         self.plot_magnitude_spectrum(file_path, class_name=class_name, file_id=file_id)
         self.plot_psd(file_path, class_name=class_name, file_id=file_id)

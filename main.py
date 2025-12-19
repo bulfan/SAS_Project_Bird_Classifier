@@ -1,14 +1,5 @@
 """
 Bird Sound Classifier - Main Entry Point
-
-This script demonstrates the basic pipeline for bird sound classification:
-1. Load configuration (via Hydra)
-2. Load dataset
-3. Split dataset (BEFORE any analysis/preprocessing)
-4. Run data exploration on TRAINING data only
-5. Run spectral analysis on TRAINING data only
-6. Preprocess audio (using config parameters)
-7. Test preprocessing on a sample and visualize
 """
 
 import time
@@ -25,20 +16,11 @@ from src.preprocessing.audio_processor import AudioProcessor
 from src.analysis.time_analysis import TimeAnalysisPipeline
 from src.analysis.spectral_analysis import SpectralAnalysisPipeline
 from src.features.scaler import StandardScaler
+from src.features.feature_extractor import FeatureExtractor
 
 
 def test_preprocessing_on_sample(cfg: DictConfig, train_dataset, spectral_pipeline) -> None:
-    """
-    Test preprocessing on samples from training set and generate spectrograms.
-    
-    Files to test are specified via cfg.preprocessing.test_files.
-    Supports both file stems (strings) and indices (ints).
-    
-    Args:
-        cfg: Hydra config object
-        train_dataset: Training dataset to sample from
-        spectral_pipeline: SpectralAnalysisPipeline for spectrogram generation
-    """
+    """Test preprocessing on samples from training set and generate spectrograms."""
     print("\n" + "=" * 60)
     print("PREPROCESSING TEST: Samples from Training Set")
     print("=" * 60)
@@ -93,7 +75,6 @@ def test_preprocessing_on_sample(cfg: DictConfig, train_dataset, spectral_pipeli
     skip_filters = getattr(cfg.preprocessing, 'skip_filters', False)
     skip_spectral_gate = getattr(cfg.preprocessing, 'skip_spectral_gate', False)
     
-    # Process each test file
     for test_idx in test_indices:
         if test_idx >= len(train_dataset.samples):
             print(f"\n   ✗ Index {test_idx} out of range (dataset has {len(train_dataset.samples)} files)")
@@ -201,10 +182,8 @@ def _plot_spectrogram_from_samples(
     ax.set_yticklabels([str(int(t)) for t in band_ticks])
     ax.set_ylim(20, max_freq)
     ax.set_ylabel('Frequency (Hz, log scale)')
-    
     ax.set_xlabel('Time (seconds)')
     ax.set_title(title)
-    
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -214,15 +193,7 @@ def run_preprocessing_on_splits(cfg: DictConfig,
                                  train_dataset, 
                                  val_dataset, 
                                  test_dataset) -> None:
-    """
-    Run preprocessing on train, validation, and test splits separately.
-    
-    Args:
-        cfg: Hydra config object
-        train_dataset: Training dataset
-        val_dataset: Validation dataset
-        test_dataset: Test dataset
-    """
+    """Run preprocessing on train, validation, and test splits separately."""
     print("\n" + "=" * 60)
     print("PREPROCESSING: Running on Train/Val/Test Splits")
     print("=" * 60)
@@ -243,8 +214,7 @@ def run_preprocessing_on_splits(cfg: DictConfig,
     splits = [
         ('train', train_dataset),
         ('val', val_dataset),
-        ('test', test_dataset)
-    ]
+        ('test', test_dataset)]
     
     for split_name, split_dataset in splits:
         if len(split_dataset) == 0:
@@ -275,17 +245,14 @@ def run_preprocessing_on_splits(cfg: DictConfig,
             
             for file_path in files:
                 try:
-                    # Load audio
                     samples, sr = processor.load_audio(file_path)
                     
-                    # Apply preprocessing
                     processed = processor.process(
                         samples,
                         skip_filters=getattr(preproc_cfg, 'skip_filters', False),
                         skip_spectral_gate=getattr(preproc_cfg, 'skip_spectral_gate', False)
                     )
                     
-                    # Save processed audio
                     output_path = class_output_dir / (Path(file_path).stem + ".npy")
                     np.save(output_path, processed.astype(np.float32))
                     total_processed += 1
@@ -319,7 +286,6 @@ def main(cfg: DictConfig) -> None:
     train_ratio = cfg.data.train_ratio
     val_ratio = cfg.data.val_ratio
     test_ratio = cfg.data.test_ratio
-    num_classes = cfg.model.num_classes
 
     print(f"   - Raw data directory: {raw_dir}")
     print(f"   - Processed directory: {processed_dir}")
@@ -362,7 +328,6 @@ def main(cfg: DictConfig) -> None:
     test_dataset.print_summary("Test Dataset")
 
     # Run analysis pipelines based on configuration
-    # Pipeline modes: "single", "folder", "train", "dataset"
     print("\n5. Running Analysis Pipelines...")
     
     # Data Exploration Pipeline (time-domain)
@@ -393,9 +358,7 @@ def main(cfg: DictConfig) -> None:
     # 8. Feature Extraction
     # ==========================================
     print("\n8. Feature Extraction (From Processed Data)...")
-    from src.features.feature_extractor import FeatureExtractor
     
-    # Initialize Extractor
     extractor = FeatureExtractor(cfg)
     processed_base = Path(cfg.data.processed_dir)
     
@@ -412,11 +375,10 @@ def main(cfg: DictConfig) -> None:
     print(f"   Feature Matrix Shapes: Train {X_train.shape}, Val {X_val.shape}, Test {X_test.shape}")
    
     # ==========================================
-    # 9. Scaling & Model Selection (The Fix)
+    # 9. Scaling & Model Selection
     # ==========================================
     print("\n9. Model Optimization...")    
     # 1. SCALE ALL DATA CORRECTLY
-    # Initialize scaler
     temp_scaler = StandardScaler()
     X_train_temp = temp_scaler.fit_transform(X_train)
     X_val_temp = temp_scaler.transform(X_val)
@@ -425,15 +387,13 @@ def main(cfg: DictConfig) -> None:
     print("   Tuning KNN k-value...")
     best_k = 5
     best_acc = 0
-    
-    # Try odd numbers from 1 to 15
     for k in [1, 3, 5, 7, 9, 11, 13, 15]:
         knn = KNNClassifier(k=k)
         knn.fit(X_train_temp, y_train)
         
         # Evaluate on Validation Set
         val_preds = knn.predict(X_val_temp)
-        acc = accuracy_score(y_val, val_preds) # Assuming sklearn import or manual calc
+        acc = accuracy_score(y_val, val_preds)
         
         print(f"     k={k}: Validation Acc = {acc*100:.1f}%")
         
@@ -450,10 +410,8 @@ def main(cfg: DictConfig) -> None:
 
     # Get model type from config
     model_type = getattr(cfg.model, 'type', 'knn')
-    use_validation = getattr(cfg.training, 'use_validation', True)
     
-    # 1. MERGE RAW DATA
-    # MERGE Train and Validation sets for maximum power
+    # 1. MERGE Train and Validation sets for maximum power
     X_final = np.concatenate((X_train, X_val))
     y_final = np.concatenate((y_train, y_val))
 
@@ -524,7 +482,7 @@ def main(cfg: DictConfig) -> None:
     
 
     # ==========================================
-    # 12. Explainability (Project Requirement)
+    # 12. Explainability (Feature Importance)
     # ==========================================
     print(f"\n12. Explainability (Feature Importance)...")
     

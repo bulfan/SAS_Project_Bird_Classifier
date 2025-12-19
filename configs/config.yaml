@@ -10,10 +10,10 @@ data:
   test_ratio: 0.15
   seed : 42  # Random seed for reproducibility
 
-# Preprocessing settings (noise reduction)
+# Preprocessing settings
 preprocessing:
   enabled: false              # Enable/disable preprocessing pipeline
-  test_mode: false             # If true, process only a few files for quick testing (works even if enabled=false)
+  test_mode: true             # If true, process only a few files for quick testing (works even if enabled=false)
   test_files: ["XC154310", "XC189044", "XC217762", "XC325225", "XC182410"]
                               # empty = first file, or list specific files by stem or index
   sample_rate: 22050          # Target sample rate for processed audio
@@ -54,9 +54,7 @@ analysis:
     max_duration: 30.0      # Max duration (in seconds) to process for each audio file
 
 # Model settings
-model:
-  num_classes: 6  # Number of bird species (aldfly, amecro, amered, brebla, purfin, pygnut)
-  
+model:  
   # Model selection - which models to train and evaluate
   # Options: "knn", "random_forest", "both"
   type: "both"
@@ -69,11 +67,3 @@ model:
   random_forest:
     n_estimators: 100         # Number of trees
     max_depth: null           # Max tree depth (null = unlimited)
-
-# Training settings
-training:
-  enabled: true               # Enable/disable training pipeline
-  use_validation: true        # Use validation set for model selection
-  batch_size: 32
-  epochs: 50
-  learning_rate: 0.001

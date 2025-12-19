@@ -11,13 +11,7 @@ class BirdSoundDataset:
     """Dataset class for loading and handling bird sound data."""
 
     def __init__(self, data_dir: str, processed_dir: Optional[str] = None):
-        """
-        Initialize the dataset.
-
-        Args:
-            data_dir: Path to the directory containing raw audio files.
-            processed_dir: Path to the directory for processed data (optional).
-        """
+        """Initialize the dataset."""
         self.data_dir = Path(data_dir)
         self.processed_dir = Path(processed_dir) if processed_dir else None
         self.samples: List[Tuple[str, int]] = []  # List of (file_path, label)
@@ -29,7 +23,6 @@ class BirdSoundDataset:
     def load(self) -> "BirdSoundDataset":
         """
         Load the dataset from the data directory.
-        
         Expects directory structure:
             data_dir/
                 class1/
@@ -38,14 +31,9 @@ class BirdSoundDataset:
                 class2/
                     audio1.mp3
                     ...
-        
-        Returns:
-            self for method chaining.
         """
         if not self.data_dir.exists():
-            raise FileNotFoundError(
-                f"Data directory not found: {self.data_dir}"
-            )
+            raise FileNotFoundError(f"Data directory not found: {self.data_dir}")
 
         self.samples = []
         self.class_names = []
@@ -53,11 +41,7 @@ class BirdSoundDataset:
         self.idx_to_class = {}
 
         # Get all subdirectories (each represents a class/species)
-        class_dirs = sorted([
-            d for d in self.data_dir.iterdir()
-            if d.is_dir()
-        ])
-        
+        class_dirs = sorted([d for d in self.data_dir.iterdir() if d.is_dir()])
         if not class_dirs:
             raise ValueError(f"No class directories found in {self.data_dir}")
         
@@ -69,16 +53,12 @@ class BirdSoundDataset:
             self.idx_to_class[idx] = class_name
             
             # Find all audio files in this class directory
-            audio_extensions = {'.mp3', '.wav', '.flac', '.ogg', '.m4a'}
+            audio_extensions = {'.mp3'}
             audio_files = [
                 f for f in class_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in audio_extensions
-            ]
-            
-            # Add samples
+                if f.is_file() and f.suffix.lower() in audio_extensions]
             for audio_file in audio_files:
                 self.samples.append((str(audio_file), idx))
-        
         self._loaded = True
         return self
 
@@ -89,46 +69,21 @@ class BirdSoundDataset:
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> Tuple[str, int]:
-        """
-        Return a sample from the dataset.
-        
-        Args:
-            idx: Index of the sample.
-            
-        Returns:
-            Tuple of (file_path, label_index).
-        """
+        """Return a sample from the dataset."""
         if not self._loaded:
             raise RuntimeError("Dataset not loaded. Call load() first.")
         if idx < 0 or idx >= len(self.samples):
             raise IndexError(
                 f"Index {idx} out of range for dataset "
-                f"with {len(self.samples)} samples"
-            )
+                f"with {len(self.samples)} samples")
         return self.samples[idx]
 
     def get_class_name(self, idx: int) -> str:
-        """
-        Get the class name for a given label index.
-        
-        Args:
-            idx: Label index.
-            
-        Returns:
-            Class name string.
-        """
+        """Get the class name for a given label index."""
         return self.idx_to_class.get(idx, "Unknown")
 
     def get_class_index(self, class_name: str) -> int:
-        """
-        Get the label index for a given class name.
-        
-        Args:
-            class_name: Name of the class.
-            
-        Returns:
-            Label index.
-        """
+        """Get the label index for a given class name."""
         return self.class_to_idx.get(class_name, -1)
 
     def get_num_classes(self) -> int:
@@ -136,33 +91,11 @@ class BirdSoundDataset:
         return len(self.class_names)
 
     def get_samples_by_class(self, class_idx: int) -> List[Tuple[str, int]]:
-        """
-        Get all samples belonging to a specific class.
-        
-        Args:
-            class_idx: Index of the class.
-            
-        Returns:
-            List of (file_path, label) tuples for the class.
-        """
-        return [
-            (path, label) for path, label in self.samples
-            if label == class_idx
-        ]
+        """Get all samples belonging to a specific class."""
+        return [(path, label) for path, label in self.samples if label == class_idx]
 
-    def _create_subset(
-        self,
-        samples: List[Tuple[str, int]]
-    ) -> "BirdSoundDataset":
-        """
-        Create a new dataset subset with the given samples.
-
-        Args:
-            samples: List of (file_path, label) tuples.
-
-        Returns:
-            New BirdSoundDataset instance with the subset.
-        """
+    def _create_subset(self, samples: List[Tuple[str, int]]) -> "BirdSoundDataset":
+        """Create a new dataset subset with the given samples."""
         processed_path = str(self.processed_dir) if self.processed_dir else None
         subset = BirdSoundDataset(str(self.data_dir), processed_path)
         subset.samples = samples
@@ -172,43 +105,17 @@ class BirdSoundDataset:
         subset._loaded = True
         return subset
 
-    def split(
-        self,
-        train_ratio: float = 0.7,
-        val_ratio: float = 0.15,
-        test_ratio: float = 0.15,
-        shuffle: bool = True,
-        seed: Optional[int] = None
-    ) -> Tuple["BirdSoundDataset", "BirdSoundDataset", "BirdSoundDataset"]:
-        """
-        Split the dataset into training, validation, and test sets.
-
-        Uses stratified splitting to maintain class distribution across splits.
-
-        Args:
-            train_ratio: Ratio of samples for training (default: 0.7).
-            val_ratio: Ratio of samples for validation (default: 0.15).
-            test_ratio: Ratio of samples for testing (default: 0.15).
-            shuffle: Whether to shuffle before splitting.
-            seed: Random seed for reproducibility.
-
-        Returns:
-            Tuple of (train_dataset, val_dataset, test_dataset).
-
-        Raises:
-            RuntimeError: If dataset is not loaded.
-            ValueError: If ratios don't sum to 1.0 (within tolerance).
-        """
+    def split(self, train_ratio: float = 0.7, val_ratio: float = 0.15, test_ratio: float = 0.15, shuffle: bool = True, seed: Optional[int] = None) -> Tuple["BirdSoundDataset", "BirdSoundDataset", "BirdSoundDataset"]:
+        """Split the dataset into training, validation, and test sets."""
         if not self._loaded:
             raise RuntimeError("Dataset not loaded. Call load() first.")
 
-        # Validate ratios
+        # Verify ratios
         total_ratio = train_ratio + val_ratio + test_ratio
         if not (0.99 <= total_ratio <= 1.01):
             raise ValueError(
                 f"Ratios must sum to 1.0, got {total_ratio:.2f} "
-                f"(train={train_ratio}, val={val_ratio}, test={test_ratio})"
-            )
+                f"(train={train_ratio}, val={val_ratio}, test={test_ratio})")
 
         if seed is not None:
             random.seed(seed)
@@ -217,19 +124,15 @@ class BirdSoundDataset:
         train_samples = []
         val_samples = []
         test_samples = []
-
         for class_idx in range(len(self.class_names)):
             class_samples = self.get_samples_by_class(class_idx)
-
             if shuffle:
                 random.shuffle(class_samples)
-
             n_samples = len(class_samples)
             n_train = int(n_samples * train_ratio)
             n_val = int(n_samples * val_ratio)
             # Remaining samples go to test to avoid rounding issues
             n_test = n_samples - n_train - n_val
-
             train_samples.extend(class_samples[:n_train])
             val_samples.extend(class_samples[n_train:n_train + n_val])
             test_samples.extend(class_samples[n_train + n_val:])
@@ -250,7 +153,6 @@ class BirdSoundDataset:
     def summary(self) -> Dict[str, Any]:
         """
         Get a summary of the dataset.
-        
         Returns:
             Dictionary with dataset statistics.
         """
@@ -269,25 +171,16 @@ class BirdSoundDataset:
             "num_classes": len(self.class_names),
             "class_names": self.class_names,
             "class_distribution": class_distribution,
-            "data_dir": str(self.data_dir)
-        }
+            "data_dir": str(self.data_dir)}
 
     def print_summary(self, title: str = "Dataset Summary") -> None:
-        """
-        Print a formatted summary of the dataset.
-        
-        Args:
-            title: Title to display at the top of the summary.
-        """
+        """Print a formatted summary of the dataset."""
         stats = self.summary()
-        
         print(f"\n   {title}")
         print(f"   {'=' * 50}")
-        
         if not stats.get("loaded", False):
             print("   Dataset not loaded.")
             return
-        
         print(f"   Data Directory: {stats['data_dir']}")
         print(f"   Total Samples: {stats['total_samples']}")
         print(f"   Number of Classes: {stats['num_classes']}")

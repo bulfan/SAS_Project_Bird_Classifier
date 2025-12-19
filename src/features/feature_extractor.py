@@ -1,9 +1,5 @@
 """
 Feature Extractor for Bird Sound Classification.
-
-Extracts signal processing features from preprocessed audio waveforms.
-Features are designed to capture both time-domain and frequency-domain
-characteristics relevant to bird call identification.
 """
 
 import numpy as np
@@ -14,38 +10,21 @@ from typing import Tuple, Optional, List
 class FeatureExtractor:
     """
     Extract features from preprocessed audio files.
-    
     Features extracted:
     - Time domain: RMS energy, zero-crossing rate
     - Frequency domain: spectral centroid, bandwidth, peak frequency
     """
     
     def __init__(self, cfg=None, sample_rate: int = 22050):
-        """
-        Initialize feature extractor.
-        
-        Args:
-            cfg: Hydra config object (optional)
-            sample_rate: Sample rate of audio files
-        """
+        """Initialize feature extractor."""
         if cfg is not None:
             self.sample_rate = cfg.preprocessing.sample_rate
         else:
             self.sample_rate = sample_rate
     
     def extract_single(self, audio_data: np.ndarray) -> np.ndarray:
-        """
-        Extract features from a single audio file.
-        
-        Args:
-            audio_data: Audio waveform as numpy array
-            
-        Returns:
-            Feature vector (1D numpy array)
-        """
+        """Extract features from a single audio file."""
         features = []
-        
-        # Ensure float type
         y = audio_data.astype(np.float64)
         
         # --- Time Domain Features ---
@@ -55,13 +34,12 @@ class FeatureExtractor:
         features.append(rms)
         
         # 2. Zero Crossing Rate (Rough frequency/noisiness indicator)
-        # Counts how many times signal crosses zero
         zcr = np.sum(np.abs(np.diff(np.sign(y)))) / (2 * len(y))
         features.append(zcr)
         
         # --- Frequency Domain Features ---
         
-        # Compute magnitude spectrum (only positive frequencies)
+        # Compute magnitude spectrum only for positive frequencies
         spectrum = np.abs(np.fft.rfft(y))
         freqs = np.fft.rfftfreq(len(y), d=1.0 / self.sample_rate)
         
@@ -72,7 +50,7 @@ class FeatureExtractor:
         else:
             spec_prob = np.ones_like(spectrum) / len(spectrum)
         
-        # 3. Spectral Centroid (Center of mass - "brightness")
+        # 3. Spectral Centroid (Center of mass of the spectrum)
         centroid = np.sum(freqs * spec_prob)
         features.append(centroid)
         
@@ -93,26 +71,13 @@ class FeatureExtractor:
             "zero_crossing_rate", 
             "spectral_centroid",
             "spectral_bandwidth",
-            "peak_frequency"
-        ]
+            "peak_frequency"]
     
     def process_split(self, dataset, processed_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Extract features from all files in a dataset split.
-        
-        Args:
-            dataset: Dataset split object with .samples attribute
-            processed_dir: Path to processed split directory (e.g., data/processed/train)
-            
-        Returns:
-            X: Feature matrix (n_samples, n_features)
-            y: Label vector (n_samples,)
-        """
+        """Extract features from all files in a dataset split."""
         X = []
         y = []
-        
         processed_dir = Path(processed_dir)
-        
         for original_path, label_idx in dataset.samples:
             original_path = Path(original_path)
             class_name = dataset.get_class_name(label_idx)
@@ -126,12 +91,8 @@ class FeatureExtractor:
                 continue
             
             try:
-                # Load preprocessed audio
                 audio_data = np.load(processed_path)
-                
-                # Extract features
                 features = self.extract_single(audio_data)
-                
                 X.append(features)
                 y.append(label_idx)
                 
