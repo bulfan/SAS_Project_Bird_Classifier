@@ -215,9 +215,26 @@ class TimeDomainAnalysis:
         return float(np.max(durations))
         
 
+# Standalone functions for feature extraction
+def compute_rms(samples: np.ndarray) -> float:
+    return np.sqrt(np.mean(samples**2))
 
+def compute_std(samples: np.ndarray) -> float:
+    return np.std(samples)
 
+def compute_crest_factor(samples: np.ndarray) -> float:
+    rms = compute_rms(samples)
+    peak = np.max(np.abs(samples))
+    return peak / rms if rms > 0 else 0
 
+def compute_avg_amplitude(samples: np.ndarray) -> float:
+    return np.mean(np.abs(samples))
+
+def compute_min_amplitude(samples: np.ndarray) -> float:
+    return np.min(np.abs(samples))
+
+def compute_max_amplitude(samples: np.ndarray) -> float:
+    return np.max(np.abs(samples))
 
 
     

@@ -40,13 +40,39 @@ Audio preprocessing utilities for bird sound classification.
 """
 
 
-def fir_filter_convolution(x, h):
+def fir_filter_convolution(x: list, h: list) -> list:
     """
     Perform convolution of signal x[n] with filter h[n]
-    and return the output y[n] with the same length as x.
+    and return the output y[n]
+    where x[n] and h[n] overlap.
+    Parameters:
+        x (list): Input discrete signal.
+        h (list): FIR filter kernel.
+
+    Returns:
+        list: Convolved output signal where x[n] and h[n] overlap.
     """
-    import numpy as np
-    return np.convolve(x, h, mode='same')
+
+    # Length of input signal and filter
+    L_x = len(x)
+    L_h = len(h)
+
+    # Length of the output signal
+    L_y = L_x + L_h - 1
+
+    # Initialize output signal y[n] with zeros
+    y = [0] * L_y
+
+    # Perform convolution: sliding window dot product
+    for n in range(L_y):
+        y[n] = sum(
+            x[i] * h[n - i]
+            for i in range(max(0, n - L_h + 1), min(L_x, n + 1))
+        )
+
+    start = 0
+    end = L_y
+    return y[start:end]
 
 
 class AudioProcessor:
@@ -104,84 +130,52 @@ class AudioProcessor:
 
     def highpass_filter(self, y: np.ndarray, cutoff_freq: float, numtaps: int = 201) -> np.ndarray:
         """
-        Apply a custom FIR high-pass filter to a 1-D signal using firwin and our own convolution implementation.
+        Apply a custom FIR high-pass filter using our own design and convolution.
 
         Args:
             y: Input signal (1-D numpy array).
             cutoff_freq: Cutoff frequency (Hz).
-            numtaps: Number of filter taps (default: 101).
+            numtaps: Number of filter taps (default: 201).
 
         Returns:
-            Filtered signal as numpy array. If scipy is not available, returns original signal.
+            Filtered signal as numpy array.
         """
-        try:
-            from scipy.signal import firwin
-        except Exception:
+        if cutoff_freq is None or cutoff_freq <= 0 or cutoff_freq >= self.sample_rate / 2:
             return y
-
-        sr = getattr(self, 'sample_rate', None)
-        if sr is None or cutoff_freq is None:
-            return y
-
-        nyq = 0.5 * sr
-        normal_cutoff = float(cutoff_freq) / nyq
-        if normal_cutoff <= 0 or normal_cutoff >= 1:
-            return y
-
-        # Ensure numtaps is odd for Type I FIR filter
-        if numtaps % 2 == 0:
-            numtaps += 1
 
         try:
-            b = firwin(numtaps, normal_cutoff, pass_zero=False, window='hamming')
+            b = self.design_highpass_fir(cutoff_freq, numtaps)
         except Exception:
             return y
 
         try:
-            y_f = fir_filter_convolution(y, b)
-            import numpy as np
+            y_f = fir_filter_convolution(list(y), list(b))
             return np.asarray(y_f, dtype=y.dtype)
         except Exception:
             return y
         
     def lowpass_filter(self, y: np.ndarray, cutoff_freq: float, numtaps: int = 1001) -> np.ndarray:
         """
-        Apply a custom FIR low-pass filter to a 1-D signal using firwin and our own convolution implementation.
+        Apply a custom FIR low-pass filter using our own design and convolution.
 
         Args:
             y: Input signal (1-D numpy array).
             cutoff_freq: Cutoff frequency (Hz).
-            numtaps: Number of filter taps (default: 101).
+            numtaps: Number of filter taps (default: 1001).
 
         Returns:
-            Filtered signal as numpy array. If scipy is not available, returns original signal.
+            Filtered signal as numpy array.
         """
-        try:
-            from scipy.signal import firwin
-        except Exception:
+        if cutoff_freq is None or cutoff_freq <= 0 or cutoff_freq >= self.sample_rate / 2:
             return y
-
-        sr = getattr(self, 'sample_rate', None)
-        if sr is None or cutoff_freq is None:
-            return y
-
-        nyq = 0.5 * sr
-        normal_cutoff = float(cutoff_freq) / nyq
-        if normal_cutoff <= 0 or normal_cutoff >= 1:
-            return y
-
-        # Ensure numtaps is odd for Type I FIR filter
-        if numtaps % 2 == 0:
-            numtaps += 1
 
         try:
-            b = firwin(numtaps, normal_cutoff, pass_zero=True, window='hamming')
+            b = self.design_lowpass_fir(cutoff_freq, numtaps)
         except Exception:
             return y
 
         try:
-            y_f = fir_filter_convolution(y, b)
-            import numpy as np
+            y_f = fir_filter_convolution(list(y), list(b))
             return np.asarray(y_f, dtype=y.dtype)
         except Exception:
             return y
@@ -285,14 +279,28 @@ class AudioProcessor:
     
     def _fft(self, signal: np.ndarray) -> np.ndarray:
         """
-        Optimized Cooley-Tukey FFT (radix-2 DIT) with caching.
-        Custom implementation from scratch.
-        
+        Compute the Fast Fourier Transform (FFT) of a 1D signal using a custom radix-2 Decimation in Time (DIT) Cooley-Tukey algorithm.
+
+        This implementation is optimized for efficiency with caching of bit-reversal indices and twiddle factors to avoid recomputation
+        in batch processing scenarios. It pads the input signal to the next power of 2 length if necessary for radix-2 compatibility.
+
+        Algorithm Overview:
+        - Bit-reversal permutation: Rearranges the input signal indices to align with the DIT structure.
+        - Iterative butterfly operations: Combines smaller DFTs into larger ones using twiddle factors (complex exponentials).
+        - Time complexity: O(N log N), where N is the padded signal length.
+        - Space complexity: O(N) for the signal array and cached factors.
+
         Args:
-            signal: Input signal (1D numpy array).
-        
+            signal (np.ndarray): Input time-domain signal as a 1D real or complex numpy array. Length should ideally be a power of 2
+                                 for optimal performance; otherwise, it will be zero-padded.
+
         Returns:
-            FFT result as complex array.
+            np.ndarray: Complex-valued frequency-domain representation of the input signal, with length equal to the padded N.
+
+        Notes:
+            - Twiddle factors and bit-reversal indices are cached per length N to speed up repeated calls.
+            - This is a from-scratch implementation without external FFT libraries for educational and portability purposes.
+            - For inverse FFT, use _ifft() method.
         """
         n = len(signal)
         if n & (n - 1) != 0:

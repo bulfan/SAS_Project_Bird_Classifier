@@ -15,19 +15,33 @@ from PIL import Image
 from src.preprocessing.call_detection import detect_calls
 
 
-def save_spectrogram(y, sr, out_path, n_fft=2048, hop_length=512, cmap='magma'):
-    S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length, window='hann'))
-    S_db = librosa.amplitude_to_db(S, ref=np.max)
+def save_spectrogram(y, sr, out_path, n_fft=2048, hop_length=512, cmap='magma', use_mel=False, n_mels=128):
+    if y.ndim == 2:
+        # y is already a spectrogram (e.g., from processed .npy)
+        S_db = librosa.amplitude_to_db(np.abs(y), ref=np.max)
+        freqs = np.linspace(0, sr/2, S_db.shape[0])
+        ylabel = 'Frequency (Hz)'
+        times = np.linspace(0, len(y[0]) * hop_length / sr, S_db.shape[1])
+    elif use_mel:
+        S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels, power=2.0)
+        S_db = librosa.power_to_db(S, ref=np.max)
+        freqs = librosa.mel_frequencies(n_mels=n_mels, fmin=0, fmax=sr/2)
+        ylabel = 'Mel Frequency (Hz)'
+        times = librosa.frames_to_time(np.arange(S_db.shape[1]), sr=sr, hop_length=hop_length)
+    else:
+        S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length, window='hann'))
+        S_db = librosa.amplitude_to_db(S, ref=np.max)
+        freqs = np.linspace(0, sr/2, S_db.shape[0])
+        ylabel = 'Frequency (Hz)'
+        times = librosa.frames_to_time(np.arange(S_db.shape[1]), sr=sr, hop_length=hop_length)
     plt.figure(figsize=(6, 3))
-    times = librosa.frames_to_time(np.arange(S_db.shape[1]), sr=sr, hop_length=hop_length)
-    freqs = np.linspace(0, sr/2, S_db.shape[0])
     plt.pcolormesh(times, freqs, S_db, shading='gouraud', cmap=cmap)
     plt.xlabel('Time (s)')
-    plt.ylabel('Frequency (Hz)')
+    plt.ylabel(ylabel)
     plt.ylim(0, sr/2)
     plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
-    plt.close()
+    plt.close() 
 
 
 def combine_images_horizontally(image_paths, out_path):
@@ -47,39 +61,38 @@ def main(data_dir='data/raw', out_base='outputs/frequency_examples', n_per_class
     data_dir = Path(data_dir)
     out_base = Path(out_base)
     out_base.mkdir(parents=True, exist_ok=True)
+    # Determine subfolder based on data source
+    out_sub = 'processed' if 'processed' in str(data_dir) else 'raw'
     classes = [p for p in sorted(data_dir.iterdir()) if p.is_dir()]
     summary = {}
+    def get_non_silent_segment(samples, segment_length=2048, threshold=0.01):
+        total_len = len(samples)
+        for start in range(0, max(1, total_len - segment_length), max(1, segment_length // 2)):
+            seg = samples[start:start+segment_length]
+            rms = np.sqrt(np.mean(seg**2))
+            if rms > threshold:
+                return seg
+        return samples[-segment_length:]
+
     for cls in classes:
         files = sorted([f for f in cls.iterdir() if f.suffix.lower() in ('.wav', '.mp3', '.flac', '.ogg', '.m4a', '.npy')])[:n_per_class]
         if not files:
             continue
-        class_out = out_base / cls.name
+        class_out = out_base / out_sub / cls.name
         class_out.mkdir(parents=True, exist_ok=True)
         saved = []
         for f in files:
             try:
                 if f.suffix.lower() == '.npy':
-                    # processed numpy arrays (saved by preprocessing) are assumed
-                    # to be 1-D sample arrays at `target_sr` (no sr stored)
                     y = np.load(str(f))
                     sr = target_sr
+                    segment = y  # Use the whole clip
                 else:
                     y, sr = librosa.load(str(f), sr=target_sr, mono=True)
-                # detect calls and save up to `calls_per_file` chops per file
-                segments = detect_calls(y, sr)
-                if segments:
-                    for i, (start_t, end_t, dur) in enumerate(segments[:calls_per_file], start=1):
-                        s_idx = int(max(0, round(start_t * sr)))
-                        e_idx = int(min(len(y), round(end_t * sr)))
-                        y_seg = y[s_idx:e_idx]
-                        out_file = class_out / f'spectrogram_{f.stem}_call{i}.png'
-                        save_spectrogram(y_seg, sr, str(out_file), n_fft=n_fft, hop_length=hop_length)
-                        saved.append(str(out_file))
-                else:
-                    # fallback: save full-file spectrogram if no calls detected
-                    out_file = class_out / f'spectrogram_{f.stem}.png'
-                    save_spectrogram(y, sr, str(out_file), n_fft=n_fft, hop_length=hop_length)
-                    saved.append(str(out_file))
+                    segment = y  # Use the whole clip
+                out_file = class_out / f'spectrogram_{f.stem}.png'
+                save_spectrogram(segment, sr, str(out_file), n_fft=n_fft, hop_length=hop_length, use_mel=False)
+                saved.append(str(out_file))
             except Exception as e:
                 print(f'Failed to process {f}: {e}')
         # combine into a grid (horizontal)

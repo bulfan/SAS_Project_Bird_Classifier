@@ -1,3 +1,47 @@
+# Wrapper to extract all requested features from a segment
+from src.analysis.time_domain import (
+    compute_rms, compute_std, compute_crest_factor, compute_avg_amplitude,
+    compute_min_amplitude, compute_max_amplitude
+)
+from src.analysis.spectral_analysis import (
+    compute_psd, compute_avg_power, compute_max_frequency, compute_min_frequency,
+    compute_min_magnitude, compute_max_magnitude
+)
+
+def extract_all_features(samples, sr):
+    """
+    Extract all required time-domain and spectral features from a segment.
+    Returns a dictionary of features.
+    """
+    # Time-domain features
+    rms = compute_rms(samples)
+    std = compute_std(samples)
+    crest = compute_crest_factor(samples)
+    avg_amp = compute_avg_amplitude(samples)
+    min_amp = compute_min_amplitude(samples)
+    max_amp = compute_max_amplitude(samples)
+
+    # Spectral features
+    freqs, psd = compute_psd(samples, sr)
+    avg_power = compute_avg_power(psd)
+    max_freq = compute_max_frequency(freqs, psd)
+    min_freq = compute_min_frequency(freqs, psd)
+    min_mag = compute_min_magnitude(psd)
+    max_mag = compute_max_magnitude(psd)
+
+    return {
+        'rms': rms,
+        'std': std,
+        'crest_factor': crest,
+        'avg_amplitude': avg_amp,
+        'min_amplitude': min_amp,
+        'max_amplitude': max_amp,
+        'avg_power': avg_power,
+        'max_frequency': max_freq,
+        'min_frequency': min_freq,
+        'min_magnitude': min_mag,
+        'max_magnitude': max_mag
+    }
 """
 Data Exploration Pipeline for Bird Sound Classification.
 

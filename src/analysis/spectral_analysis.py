@@ -1,3 +1,34 @@
+# Spectral feature extraction functions for audio segments
+import numpy as np
+
+def compute_psd(samples, sr):
+    """Compute power spectral density (PSD) using FFT."""
+    freqs = np.fft.rfftfreq(len(samples), 1/sr)
+    spectrum = np.fft.rfft(samples)
+    psd = np.abs(spectrum) ** 2 / len(samples)
+    return freqs, psd
+
+def compute_avg_power(psd):
+    """Average power from PSD."""
+    return float(np.mean(psd))
+
+def compute_max_frequency(freqs, psd):
+    """Frequency with maximum power."""
+    idx = np.argmax(psd)
+    return float(freqs[idx])
+
+def compute_min_frequency(freqs, psd, threshold=1e-8):
+    """Lowest frequency with nonzero (or above threshold) power."""
+    nonzero = np.where(psd > threshold)[0]
+    return float(freqs[nonzero[0]]) if len(nonzero) > 0 else 0.0
+
+def compute_min_magnitude(psd):
+    """Minimum magnitude (power) in PSD."""
+    return float(np.min(psd))
+
+def compute_max_magnitude(psd):
+    """Maximum magnitude (power) in PSD."""
+    return float(np.max(psd))
 """
 Spectral Analysis Pipeline for Bird Sound Classification.
 

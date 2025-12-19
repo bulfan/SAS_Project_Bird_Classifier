@@ -82,6 +82,63 @@ class BirdSoundDataset:
         self._loaded = True
         return self
 
+    def load_processed(self) -> "BirdSoundDataset":
+        """
+        Load the dataset from processed .npy files.
+        
+        Expects directory structure:
+            processed_dir/
+                class1/
+                    audio1.npy
+                    audio2.npy
+                class2/
+                    audio1.npy
+                    ...
+        
+        Returns:
+            self for method chaining.
+        """
+        if self.processed_dir is None:
+            raise ValueError("processed_dir not set")
+        if not self.processed_dir.exists():
+            raise FileNotFoundError(
+                f"Processed directory not found: {self.processed_dir}"
+            )
+
+        self.samples = []
+        self.class_names = []
+        self.class_to_idx = {}
+        self.idx_to_class = {}
+
+        # Get all subdirectories (each represents a class/species)
+        class_dirs = sorted([
+            d for d in self.processed_dir.iterdir()
+            if d.is_dir()
+        ])
+        
+        if not class_dirs:
+            raise ValueError(f"No class directories found in {self.processed_dir}")
+        
+        # Build class mappings
+        for idx, class_dir in enumerate(class_dirs):
+            class_name = class_dir.name
+            self.class_names.append(class_name)
+            self.class_to_idx[class_name] = idx
+            self.idx_to_class[idx] = class_name
+            
+            # Find all .npy files in this class directory
+            npy_files = [
+                f for f in class_dir.iterdir()
+                if f.is_file() and f.suffix.lower() == '.npy'
+            ]
+            
+            # Add samples
+            for npy_file in npy_files:
+                self.samples.append((str(npy_file), idx))
+        
+        self._loaded = True
+        return self
+
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
         if not self._loaded:
