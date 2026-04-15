@@ -1,4 +1,4 @@
-# Default configuration for bird sound classifier
+# Default configuration for whale sound classifier
 
 # Data settings
 data:
@@ -14,11 +14,11 @@ data:
 preprocessing:
   enabled: false              # Enable/disable preprocessing pipeline
   test_mode: false             # If true, process only a few files for quick testing (works even if enabled=false)
-  test_files: ["XC154310", "XC189044", "XC217762", "XC325225", "XC182410"]
+  test_files: []
                               # empty = first file, or list specific files by stem or index
   sample_rate: 22050          # Target sample rate for processed audio
   highpass_cutoff: 1000       # Hz - removes low-freq rumble (wind, traffic)
-  lowpass_cutoff: 8000        # Hz - removes high-freq hiss (most birds: 1-8 kHz)
+  lowpass_cutoff: 8000        # Hz - removes high-freq hiss
   gate_threshold_db: -40      # dB threshold for spectral gate
   skip_filters: false         # Skip highpass/lowpass FIR filters
   skip_spectral_gate: false   # Skip frequency-domain spectral gate
@@ -55,7 +55,7 @@ analysis:
 
 # Model settings
 model:
-  num_classes: 6  # Number of bird species (aldfly, amecro, amered, brebla, purfin, pygnut)
+  num_classes: 10  # Fallback class count; runtime uses classes detected from data/raw
   
   # Model selection - which models to train and evaluate
   # Options: "knn", "random_forest", "both"

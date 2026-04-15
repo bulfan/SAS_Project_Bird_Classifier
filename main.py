@@ -1,7 +1,7 @@
 """
-Bird Sound Classifier - Main Entry Point
+Whale Sound Classifier - Main Entry Point
 
-This script demonstrates the basic pipeline for bird sound classification:
+This script demonstrates the basic pipeline for whale sound classification:
 1. Load configuration (via Hydra)
 2. Load dataset
 3. Split dataset (BEFORE any analysis/preprocessing)
@@ -97,7 +97,7 @@ def test_preprocessing_on_sample(cfg: DictConfig, train_dataset, spectral_pipeli
     # Process each test file
     for test_idx in test_indices:
         if test_idx >= len(train_dataset.samples):
-            print(f"\n   ✗ Index {test_idx} out of range (dataset has {len(train_dataset.samples)} files)")
+            print(f"\n   [ERROR] Index {test_idx} out of range (dataset has {len(train_dataset.samples)} files)")
             continue
         
         file_path, label_idx = train_dataset.samples[test_idx]
@@ -146,10 +146,10 @@ def test_preprocessing_on_sample(cfg: DictConfig, train_dataset, spectral_pipeli
                 save_path=test_output_dir / f"{Path(file_path).stem}_processed_spectrogram.png"
             )
             
-            print(f"     ✓ Spectrograms saved")
+            print("     [OK] Spectrograms saved")
             
         except Exception as e:
-            print(f"     ✗ Error processing: {e}")
+            print(f"     [ERROR] Error processing: {e}")
     
     # Restore original settings
     spectral_pipeline.output_dir = original_output_dir
@@ -292,19 +292,32 @@ def run_preprocessing_on_splits(cfg: DictConfig,
                     total_processed += 1
                     
                 except Exception as e:
-                    print(f"     ✗ Failed {Path(file_path).name}: {e}")
+                    print(f"     [ERROR] Failed {Path(file_path).name}: {e}")
                     total_failed += 1
         
-        print(f"     ✓ {split_name}: {total_processed} processed, {total_failed} failed")
+        print(f"     [OK] {split_name}: {total_processed} processed, {total_failed} failed")
         print(f"     Output: {split_output_dir}")
     
     print("\n" + "=" * 60)
 
 
+def _split_has_all_processed_files(split_dataset, split_output_dir: Path) -> bool:
+    """Return True only if all expected processed files exist for a split."""
+    if len(split_dataset) == 0:
+        return True
+
+    for file_path, label_idx in split_dataset.samples:
+        class_name = split_dataset.get_class_name(label_idx)
+        expected = split_output_dir / class_name / (Path(file_path).stem + ".npy")
+        if not expected.exists():
+            return False
+    return True
+
+
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
-    """Main function to run the bird sound classifier pipeline."""
-    print("Bird Sound Classifier")
+    """Main function to run the whale sound classifier pipeline."""
+    print("Whale Sound Classifier")
     print("=" * 40)
 
     # Print configuration
@@ -320,7 +333,7 @@ def main(cfg: DictConfig) -> None:
     train_ratio = cfg.data.train_ratio
     val_ratio = cfg.data.val_ratio
     test_ratio = cfg.data.test_ratio
-    num_classes = cfg.model.num_classes
+    config_num_classes = cfg.model.num_classes
 
     print(f"   - Raw data directory: {raw_dir}")
     print(f"   - Processed directory: {processed_dir}")
@@ -333,7 +346,7 @@ def main(cfg: DictConfig) -> None:
     processor = AudioProcessor(cfg=cfg.preprocessing)
     print(f"   - Audio processor initialized (hp={processor.highpass_cutoff}Hz, lp={processor.lowpass_cutoff}Hz)")
 
-    classifier = BirdClassifier(num_classes=num_classes)
+    classifier = BirdClassifier(num_classes=config_num_classes)
     print("   - Classifier initialized")
 
     # Initialize analysis pipelines with config
@@ -347,6 +360,10 @@ def main(cfg: DictConfig) -> None:
     # Load and explore dataset
     print("\n3. Loading dataset...")
     dataset.load()
+    num_classes = dataset.get_num_classes()
+    if config_num_classes != num_classes:
+        print(f"   - Config num_classes={config_num_classes}, detected={num_classes} from data")
+    classifier.num_classes = num_classes
     
     # Print dataset summary if enabled
     dataset.print_summary("Full Dataset Summary")
@@ -391,10 +408,20 @@ def main(cfg: DictConfig) -> None:
     
     # Run preprocessing on all splits
     print("\n7. Running Preprocessing on All Splits...")
-    if cfg.preprocessing.enabled:
+    processed_base = Path(cfg.data.processed_dir)
+    processed_ready = (
+        _split_has_all_processed_files(train_dataset, processed_base / "train")
+        and _split_has_all_processed_files(val_dataset, processed_base / "val")
+        and _split_has_all_processed_files(test_dataset, processed_base / "test")
+    )
+    should_run_preprocessing = cfg.preprocessing.enabled or not processed_ready
+
+    if should_run_preprocessing:
+        if not cfg.preprocessing.enabled:
+            print("   Processed data not found; auto-running preprocessing.")
         run_preprocessing_on_splits(cfg, train_dataset, val_dataset, test_dataset)
     else:
-        print("   Preprocessing pipeline is disabled in config. Skipping.")
+        print("   Using existing processed data.")
 
     # ==========================================
     # 8. Feature Extraction
@@ -425,30 +452,39 @@ def main(cfg: DictConfig) -> None:
     # 1. SCALE ALL DATA CORRECTLY
     # Initialize scaler
     temp_scaler = StandardScaler()
-    X_train_temp = temp_scaler.fit_transform(X_train)
-    X_val_temp = temp_scaler.transform(X_val)
+    X_train_scaled = temp_scaler.fit_transform(X_train)
+    X_val_scaled = temp_scaler.transform(X_val) if len(X_val) > 0 else np.empty((0, X_train.shape[1]))
+    X_test_scaled = temp_scaler.transform(X_test) if len(X_test) > 0 else np.empty((0, X_train.shape[1]))
     
     # 2. HYPERPARAMETER TUNING (Find best k)
     print("   Tuning KNN k-value...")
-    best_k = 5
+    default_k = max(1, int(getattr(cfg.model.knn, 'k', 5)))
+    best_k = min(default_k, len(X_train_scaled))
     best_acc = 0
-    
-    # Try odd numbers from 1 to 15
-    for k in [1, 3, 5, 7, 9, 11, 13, 15]:
-        knn = KNNClassifier(k=k)
-        knn.fit(X_train_scaled, y_train)
-        
-        # Evaluate on Validation Set
-        val_preds = knn.predict(X_val_scaled)
-        acc = accuracy_score(y_val, val_preds) # Assuming sklearn import or manual calc
-        
-        print(f"     k={k}: Validation Acc = {acc*100:.1f}%")
-        
-        if acc > best_acc:
-            best_acc = acc
-            best_k = k
 
-    print(f"   ✓ Best k found: {best_k} (Acc: {best_acc*100:.1f}%)")
+    if len(X_val_scaled) > 0:
+        # Try odd numbers from 1 to 15, bounded by training size
+        candidate_ks = [k for k in [1, 3, 5, 7, 9, 11, 13, 15] if k <= len(X_train_scaled)]
+        if not candidate_ks:
+            candidate_ks = [1]
+
+        for k in candidate_ks:
+            knn = KNNClassifier(k=k)
+            knn.fit(X_train_scaled, y_train)
+
+            # Evaluate on Validation Set
+            val_preds = knn.predict(X_val_scaled)
+            acc = accuracy_score(y_val, val_preds)
+
+            print(f"     k={k}: Validation Acc = {acc*100:.1f}%")
+
+            if acc > best_acc:
+                best_acc = acc
+                best_k = k
+
+        print(f"   [OK] Best k found: {best_k} (Acc: {best_acc*100:.1f}%)")
+    else:
+        print(f"   No validation samples available; using k={best_k}.")
 
     # ==========================================
     # 10. Final Training (Merging Train + Val)
@@ -457,7 +493,7 @@ def main(cfg: DictConfig) -> None:
 
     # Get model type from config
     model_type = getattr(cfg.model, 'type', 'knn')
-    use_validation = getattr(cfg.training, 'use_validation', True)
+    use_validation = getattr(cfg.training, 'use_validation', True) and len(X_val_scaled) > 0
 
     # MERGE Train and Validation sets for maximum power
     X_final = np.concatenate((X_train_scaled, X_val_scaled))
@@ -503,6 +539,12 @@ def main(cfg: DictConfig) -> None:
     print(f"\n11. Final Evaluation ({best_model_name} on Test Set)...")
     
     # Predict on test set
+    if len(X_test_scaled) == 0:
+        print("   No test samples available; skipping final evaluation.")
+        print("\n" + "="*40)
+        print("Pipeline Complete!")
+        return
+
     predictions = best_model.predict(X_test_scaled)
     
     # Calculate metrics using sklearn
@@ -522,7 +564,16 @@ def main(cfg: DictConfig) -> None:
     print(f"\n   Per-Class Report:")
     print(f"   {'='*40}")
     class_names = dataset.class_names
-    print(classification_report(y_test, predictions, target_names=class_names, zero_division=0))
+    all_labels = list(range(len(class_names)))
+    print(
+        classification_report(
+            y_test,
+            predictions,
+            labels=all_labels,
+            target_names=class_names,
+            zero_division=0
+        )
+    )
     
     print("\n" + "="*40)
     print("Pipeline Complete!")

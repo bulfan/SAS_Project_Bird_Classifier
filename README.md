@@ -1,13 +1,13 @@
-# SAS_Project_Bird_Classifier
+# SAS_Project_Whale_Classifier
 
-Project for the second try of SAS. This is a Bird sound classifier.
+Project for the second try of SAS. This is a whale sound classifier.
 
 ## Overview
 
-This project implements a bird sound classifier that:
-1. Loads bird sound audio data
+This project implements a whale sound classifier that:
+1. Loads whale sound audio data
 2. Preprocesses the audio (feature extraction)
-3. Classifies bird species using a machine learning model
+3. Classifies whale species using a machine learning model
 
 ## Project Structure
 
@@ -41,11 +41,31 @@ SAS_Project_Bird_Classifier/
 pip install -r requirements.txt
 ```
 
+## Dataset Layout
+
+The loader supports two input styles in `data/raw/`:
+
+1. **Class subfolders** (recommended):
+   - `data/raw/<species_name>/<clip>.mp3`
+2. **Flat files**:
+   - `data/raw/<species-name>-<clip-number>.mp3`
+   - Example: `north-atlantic-right-whale-eubalaena-glacialis-1.mp3`
+   - The trailing `-<number>` is treated as clip index, and the rest becomes the class name.
+
 ## Usage
 
 ```bash
 python main.py
 ```
+
+When you run `python main.py`, output folders are populated automatically:
+
+- If `data/processed/train` already has `.npy` files, existing processed data is reused.
+- If processed data is missing, preprocessing auto-runs and creates:
+  - `data/processed/train/<species>/*.npy`
+  - `data/processed/val/<species>/*.npy`
+  - `data/processed/test/<species>/*.npy`
+- Analysis plots are created under `outputs/` based on config (`analysis.*.output_dir`) when enabled.
 
 ## Development
 

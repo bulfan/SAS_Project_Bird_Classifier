@@ -1,14 +1,15 @@
 """
-Dataset loading and handling for bird sound classification.
+Dataset loading and handling for bioacoustic classification.
 """
 
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 import random
+import re
 
 
 class BirdSoundDataset:
-    """Dataset class for loading and handling bird sound data."""
+    """Dataset class for loading and handling bioacoustic data."""
 
     def __init__(self, data_dir: str, processed_dir: Optional[str] = None):
         """
@@ -30,7 +31,7 @@ class BirdSoundDataset:
         """
         Load the dataset from the data directory.
         
-        Expects directory structure:
+        Supports either directory structure:
             data_dir/
                 class1/
                     audio1.mp3
@@ -38,6 +39,12 @@ class BirdSoundDataset:
                 class2/
                     audio1.mp3
                     ...
+
+        Or flat-file structure where each file name encodes class:
+            data_dir/
+                species-a-1.mp3
+                species-a-2.mp3
+                species-b.mp3
         
         Returns:
             self for method chaining.
@@ -57,27 +64,47 @@ class BirdSoundDataset:
             d for d in self.data_dir.iterdir()
             if d.is_dir()
         ])
-        
-        if not class_dirs:
-            raise ValueError(f"No class directories found in {self.data_dir}")
-        
-        # Build class mappings
-        for idx, class_dir in enumerate(class_dirs):
-            class_name = class_dir.name
-            self.class_names.append(class_name)
-            self.class_to_idx[class_name] = idx
-            self.idx_to_class[idx] = class_name
-            
-            # Find all audio files in this class directory
-            audio_extensions = {'.mp3', '.wav', '.flac', '.ogg', '.m4a'}
+
+        audio_extensions = {'.mp3', '.wav', '.flac', '.ogg', '.m4a'}
+
+        if class_dirs:
+            # Standard class-subfolder layout
+            for idx, class_dir in enumerate(class_dirs):
+                class_name = class_dir.name
+                self.class_names.append(class_name)
+                self.class_to_idx[class_name] = idx
+                self.idx_to_class[idx] = class_name
+
+                audio_files = [
+                    f for f in class_dir.iterdir()
+                    if f.is_file() and f.suffix.lower() in audio_extensions
+                ]
+
+                for audio_file in audio_files:
+                    self.samples.append((str(audio_file), idx))
+        else:
+            # Flat-file layout: infer class name from file stem
             audio_files = [
-                f for f in class_dir.iterdir()
+                f for f in self.data_dir.iterdir()
                 if f.is_file() and f.suffix.lower() in audio_extensions
             ]
-            
-            # Add samples
-            for audio_file in audio_files:
-                self.samples.append((str(audio_file), idx))
+            if not audio_files:
+                raise ValueError(
+                    f"No class directories or audio files found in {self.data_dir}"
+                )
+
+            class_to_files: Dict[str, List[Path]] = {}
+            for audio_file in sorted(audio_files):
+                class_name = self._infer_flat_file_class_name(audio_file.stem)
+                class_to_files.setdefault(class_name, []).append(audio_file)
+
+            for idx, class_name in enumerate(sorted(class_to_files.keys())):
+                self.class_names.append(class_name)
+                self.class_to_idx[class_name] = idx
+                self.idx_to_class[idx] = class_name
+
+                for audio_file in class_to_files[class_name]:
+                    self.samples.append((str(audio_file), idx))
         
         self._loaded = True
         return self
@@ -230,6 +257,14 @@ class BirdSoundDataset:
             # Remaining samples go to test to avoid rounding issues
             n_test = n_samples - n_train - n_val
 
+            # Keep at least one training sample for very small classes.
+            if n_samples > 0 and n_train == 0:
+                n_train = 1
+                if n_val > 0:
+                    n_val -= 1
+                elif n_test > 0:
+                    n_test -= 1
+
             train_samples.extend(class_samples[:n_train])
             val_samples.extend(class_samples[n_train:n_train + n_val])
             test_samples.extend(class_samples[n_train + n_val:])
@@ -246,6 +281,19 @@ class BirdSoundDataset:
         test_dataset = self._create_subset(test_samples)
 
         return train_dataset, val_dataset, test_dataset
+
+    @staticmethod
+    def _infer_flat_file_class_name(stem: str) -> str:
+        """
+        Infer class label from a flat-file stem.
+
+        - Lowercases and normalizes separators
+        - Removes trailing numeric clip suffixes like "-1" / "_2"
+        """
+        normalized = stem.strip().lower().replace(" ", "-").replace("_", "-")
+        normalized = re.sub(r'-{2,}', '-', normalized)
+        normalized = re.sub(r'-\d+$', '', normalized)
+        return normalized
 
     def summary(self) -> Dict[str, Any]:
         """
@@ -295,8 +343,11 @@ class BirdSoundDataset:
         print(f"   {'-' * 30}")
         
         for class_name, count in stats['class_distribution'].items():
-            percentage = (count / stats['total_samples']) * 100
-            bar = '█' * int(percentage / 5)
+            percentage = (
+                (count / stats['total_samples']) * 100
+                if stats['total_samples'] > 0 else 0.0
+            )
+            bar = '#' * int(percentage / 5)
             print(f"   {class_name:12} | {count:4} samples | {percentage:5.1f}% | {bar}")
         
         print(f"   {'-' * 30}")
